@@ -3,16 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Super Dirt Bike HD: Motocross &amp; Trials (1080p 60fps)</title>
+  <title>Excitebike (Classic 1984 NES 8-Bit Edition)</title>
   <style>
-    :root {
-      --bg-dark: #090d16;
-      --accent: #f97316;
-      --accent-glow: rgba(249, 115, 22, 0.45);
-      --gold: #facc15;
-      --emerald: #10b981;
-      --cyan: #38bdf8;
-    }
     * {
       box-sizing: border-box;
       margin: 0;
@@ -24,9 +16,9 @@
     html, body {
       width: 100%;
       height: 100%;
-      background: radial-gradient(circle at 50% 18%, #1e293b 0%, #090d16 75%);
-      color: #f8fafc;
-      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #080808;
+      color: #fcfcfc;
+      font-family: 'Courier New', monospace;
       overflow: hidden;
       display: flex;
       flex-direction: column;
@@ -34,7 +26,6 @@
       justify-content: center;
     }
     #app-shell {
-      position: relative;
       width: 100vw;
       height: 100vh;
       display: flex;
@@ -43,83 +34,69 @@
       justify-content: center;
     }
     #topbar {
-      width: min(96vw, calc(88vh * 16 / 9));
+      width: min(96vw, calc(88vh * 4 / 3));
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 6px 14px;
+      padding: 6px 12px;
       margin-bottom: 6px;
-      background: rgba(15, 23, 42, 0.86);
-      border: 1px solid rgba(249, 115, 22, 0.35);
-      border-radius: 12px;
-      backdrop-filter: blur(10px);
+      background: #141414;
+      border: 2px solid #d82800;
       font-size: 13px;
-      z-index: 10;
+      font-weight: bold;
+      gap: 6px;
       flex-wrap: wrap;
-      gap: 8px;
     }
     .brand {
+      color: #fcfcfc;
       display: flex;
       align-items: center;
-      gap: 10px;
-      font-weight: 800;
-      letter-spacing: 0.5px;
-      color: var(--gold);
-      text-shadow: 0 2px 8px rgba(250, 204, 21, 0.35);
+      gap: 8px;
     }
-    .badge {
-      background: linear-gradient(135deg, #f97316, #dc2626);
-      color: #fff;
+    .nes-tag {
+      background: #d82800;
+      color: #fcfcfc;
+      padding: 2px 6px;
       font-size: 11px;
-      font-weight: 800;
-      padding: 2px 8px;
-      border-radius: 999px;
-      box-shadow: 0 0 10px var(--accent-glow);
     }
     .controls-bar {
       display: flex;
-      align-items: center;
       gap: 6px;
       flex-wrap: wrap;
     }
     .btn {
-      background: rgba(30, 41, 59, 0.9);
-      color: #e2e8f0;
-      border: 1px solid rgba(148, 163, 184, 0.35);
-      padding: 5px 10px;
-      border-radius: 8px;
+      background: #242424;
+      color: #fcfcfc;
+      border: 2px solid #7c7c7c;
+      padding: 4px 8px;
+      font-family: 'Courier New', monospace;
       font-size: 12px;
-      font-weight: 700;
+      font-weight: bold;
       cursor: pointer;
-      transition: all 0.15s ease;
     }
-    .btn:hover {
-      border-color: var(--gold);
-      color: #fff;
-      transform: translateY(-1px);
-    }
-    .btn.active {
-      background: linear-gradient(135deg, #ea580c, #c2410c);
-      border-color: #fdba74;
-      color: #fff;
+    .btn:hover, .btn.active {
+      background: #d82800;
+      border-color: #fcfcfc;
     }
     #canvas-wrap {
       position: relative;
-      width: min(96vw, calc(86vh * 16 / 9));
-      aspect-ratio: 16 / 9;
-      border-radius: 16px;
-      overflow: hidden;
-      box-shadow: 0 20px 55px rgba(0, 0, 0, 0.78), 0 0 0 2px rgba(249, 115, 22, 0.35);
+      width: min(96vw, calc(85vh * 4 / 3));
+      aspect-ratio: 4 / 3;
+      border: 4px solid #383838;
       background: #000;
+      overflow: hidden;
       touch-action: none;
     }
     canvas {
       width: 100%;
       height: 100%;
       display: block;
+      image-rendering: -moz-crisp-edges;
+      image-rendering: -webkit-crisp-edges;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
       touch-action: none;
     }
-    /* Optional Virtual Arcade Buttons Overlay */
     #touch-overlay {
       position: absolute;
       inset: 0;
@@ -127,7 +104,7 @@
       display: none;
       justify-content: space-between;
       align-items: flex-end;
-      padding: 18px 22px;
+      padding: 14px 18px;
       z-index: 6;
     }
     #touch-overlay.visible {
@@ -135,53 +112,38 @@
     }
     .pad-cluster {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       pointer-events: auto;
       align-items: center;
     }
     .tbtn {
-      width: 64px;
-      height: 64px;
+      width: 58px;
+      height: 58px;
       border-radius: 50%;
-      background: rgba(15, 23, 42, 0.72);
-      border: 2px solid rgba(248, 250, 252, 0.45);
-      color: #fff;
-      font-weight: 800;
-      font-size: 13px;
+      background: rgba(20, 20, 20, 0.78);
+      border: 2px solid #fcfcfc;
+      color: #fcfcfc;
+      font-weight: bold;
+      font-size: 12px;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
-      backdrop-filter: blur(4px);
       touch-action: none;
     }
-    .tbtn.gas {
-      width: 76px;
-      height: 76px;
-      background: rgba(22, 163, 74, 0.78);
-      border-color: #86efac;
+    .tbtn.b-btn {
+      width: 66px;
+      height: 66px;
+      background: rgba(216, 40, 0, 0.85);
     }
-    .tbtn.turbo {
-      width: 70px;
-      height: 70px;
-      background: rgba(234, 88, 12, 0.82);
-      border-color: #fdba74;
+    .tbtn.a-btn {
+      width: 66px;
+      height: 66px;
+      background: rgba(0, 168, 0, 0.85);
     }
     .tbtn.pressed {
       transform: scale(0.92);
-      filter: brightness(1.25);
-    }
-    @media (max-width: 900px) {
-      #topbar {
-        width: 98vw;
-        padding: 4px 8px;
-        font-size: 11px;
-      }
-      #canvas-wrap {
-        width: 98vw;
-        border-radius: 10px;
-      }
+      filter: brightness(1.3);
     }
   </style>
 </head>
@@ -189,36 +151,33 @@
   <div id="app-shell">
     <div id="topbar">
       <div class="brand">
-        <span>🏍️ SUPER DIRT BIKE HD</span>
-        <span class="badge">1080p 60FPS</span>
-        <span style="color:#94a3b8;font-weight:600;">Trials Physics + Excitebike Stadium + Track Builder</span>
+        <span class="nes-tag">NES 1984</span>
+        <span>EXCITEBIKE (ORIGINAL 8-BIT PIXEL EDITION)</span>
       </div>
       <div class="controls-bar">
-        <button id="btn-mode-trials" class="btn active" title="Physics Stunt & Obstacle Trials Mode">⛰️ Trials Mode</button>
-        <button id="btn-mode-stadium" class="btn" title="Excitebike 4-Lane Turbo Motocross">🏁 Stadium GP</button>
-        <button id="btn-mode-editor" class="btn" title="Build & Race Your Own Custom Dirt Track">🛠️ Track Builder</button>
-        <button id="btn-prev-track" class="btn">◀ Track</button>
-        <button id="btn-next-track" class="btn">Track ▶</button>
-        <button id="btn-touch-mode" class="btn">📱 Touch: SCREEN</button>
-        <button id="btn-tilt" class="btn">📐 Tilt: OFF</button>
-        <button id="btn-mute" class="btn">🔊 Audio: ON</button>
-        <button id="btn-fullscreen" class="btn">⛶ Fullscreen</button>
+        <button id="btn-sel-a" class="btn active">1. SELECTION A</button>
+        <button id="btn-sel-b" class="btn">2. SELECTION B (RIVALS)</button>
+        <button id="btn-design" class="btn">3. DESIGN TRACK</button>
+        <button id="btn-track" class="btn">TRACK 1</button>
+        <button id="btn-touch" class="btn">TOUCH: SCREEN</button>
+        <button id="btn-tilt" class="btn">TILT: OFF</button>
+        <button id="btn-mute" class="btn">AUDIO: ON</button>
+        <button id="btn-fs" class="btn">FULLSCREEN</button>
       </div>
     </div>
 
     <div id="canvas-wrap">
-      <canvas id="game" width="1920" height="1080"></canvas>
+      <canvas id="game" width="320" height="240"></canvas>
       <div id="touch-overlay">
         <div class="pad-cluster">
-          <div class="tbtn" data-act="left">↺<span style="font-size:10px">LEAN L</span></div>
-          <div class="tbtn" data-act="right">↻<span style="font-size:10px">LEAN R</span></div>
-          <div class="tbtn" data-act="up">▲<span style="font-size:10px">LANE+</span></div>
-          <div class="tbtn" data-act="down">▼<span style="font-size:10px">LANE-</span></div>
+          <div class="tbtn" data-act="left">◀<span style="font-size:9px">TILT UP</span></div>
+          <div class="tbtn" data-act="right">▶<span style="font-size:9px">TILT DN</span></div>
+          <div class="tbtn" data-act="up">▲<span style="font-size:9px">LANE ▲</span></div>
+          <div class="tbtn" data-act="down">▼<span style="font-size:9px">LANE ▼</span></div>
         </div>
         <div class="pad-cluster">
-          <div class="tbtn" data-act="brake">🛑<span style="font-size:10px">BRAKE</span></div>
-          <div class="tbtn turbo" data-act="turbo">🔥<span style="font-size:10px">TURBO</span></div>
-          <div class="tbtn gas" data-act="gas">⚡<span style="font-size:10px">GAS</span></div>
+          <div class="tbtn b-btn" data-act="turbo">B<span style="font-size:9px">TURBO</span></div>
+          <div class="tbtn a-btn" data-act="gas">A<span style="font-size:9px">GAS</span></div>
         </div>
       </div>
     </div>

@@ -1,506 +1,356 @@
 /*
- * Super Dirt Bike HD: Motocross & Trials (1080p 60FPS Web Edition)
- * Combines:
- *  1. Physics Trials & Stunt Obstacle Mode (Miniclip Dirt Bike / Elasto Mania / Trials feel)
- *  2. Excitebike-Style 4-Lane Stadium Turbo Motocross (Turbo Overheat Gauge, Cooling Arrows, Mud, Rivals)
- *  3. Custom Track Builder (Design & test-ride your own obstacle/stadium course)
+ * EXCITEBIKE (Classic 1984 NES 8-Bit Pixel-Art Edition)
+ * Authentic 320x240 8-bit recreation featuring:
+ *  - Selection A (Solo Time Trial), Selection B (Race vs. 3 CPU Rivals), Design Mode (Track Editor)
+ *  - Original NES Palette, Trapezoidal Striped Ramps (Obstacles A-I), Mud Pits, Cooling Arrows
+ *  - A = Regular Gas, B = Turbo Gas with bottom TEMP bar & OVER HEAT stall
+ *  - 5-angle discrete pixel bike sprites, Wheelies, Slope-Matched Landings
+ *  - Classic Crash/Wipeout where your rider tumbles to the grass shoulder and runs back to the bike!
  */
 (() => {
   'use strict';
 
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
-  const W = 1920;
-  const H = 1080;
+  ctx.imageSmoothingEnabled = false;
 
-  // Game Modes: 0 = Trials Physics, 1 = Stadium GP (Excitebike 4-Lane), 2 = Track Builder
-  let gameMode = 0;
-  let currentTrackIdx = 0;
-  let gameState = 'title'; // 'title', 'playing', 'crashed', 'finished'
-  let globalTick = 0;
+  const W = 320;
+  const H = 240;
 
-  // Audio System (Continuous Engine RPM Synth + SFX)
+  // Authentic 1984 NES Palette
+  const PAL = {
+    sky: '#3cbcfc',
+    bleacherBlue: '#0058f8',
+    bleacherRed: '#d82800',
+    turfGreen: '#00a800',
+    turfDark: '#006800',
+    dirt: '#f8b878',
+    dirtDark: '#e49050',
+    laneLine: '#ac5000',
+    mud: '#503000',
+    red: '#d82800',
+    white: '#fcfcfc',
+    black: '#000000',
+    yellow: '#f8b800',
+    blue: '#0078f8',
+    cyan: '#3cbcfc',
+    gray: '#7c7c7c',
+    skin: '#fca044'
+  };
+
+  // 5x7 crisp bitmap font
+  const FONT = {
+    ' ': [0,0,0,0,0,0,0],
+    '!': [4,4,4,4,4,0,4],
+    '-': [0,0,0,31,0,0,0],
+    '.': [0,0,0,0,0,0,4],
+    '/': [1,1,2,4,8,16,16],
+    ':': [0,4,4,0,4,4,0],
+    '>': [8,4,2,1,2,4,8],
+    '<': [2,4,8,16,8,4,2],
+    '0': [14,17,19,21,25,17,14],
+    '1': [4,12,4,4,4,4,14],
+    '2': [14,17,1,6,8,16,31],
+    '3': [31,2,4,6,1,17,14],
+    '4': [2,6,10,18,31,2,2],
+    '5': [31,16,30,1,1,17,14],
+    '6': [6,8,16,30,17,17,14],
+    '7': [31,1,2,4,8,8,8],
+    '8': [14,17,17,14,17,17,14],
+    '9': [14,17,17,15,1,2,12],
+    'A': [14,17,17,31,17,17,17],
+    'B': [30,17,17,30,17,17,30],
+    'C': [14,17,16,16,16,17,14],
+    'D': [28,18,17,17,17,18,28],
+    'E': [31,16,16,30,16,16,31],
+    'F': [31,16,16,30,16,16,16],
+    'G': [14,17,16,23,17,17,15],
+    'H': [17,17,17,31,17,17,17],
+    'I': [14,4,4,4,4,4,14],
+    'J': [7,2,2,2,2,18,12],
+    'K': [17,18,20,24,20,18,17],
+    'L': [16,16,16,16,16,16,31],
+    'M': [17,27,21,21,17,17,17],
+    'N': [17,17,25,21,19,17,17],
+    'O': [14,17,17,17,17,17,14],
+    'P': [30,17,17,30,16,16,16],
+    'Q': [14,17,17,17,21,18,13],
+    'R': [30,17,17,30,20,18,17],
+    'S': [15,16,16,14,1,1,30],
+    'T': [31,4,4,4,4,4,4],
+    'U': [17,17,17,17,17,17,14],
+    'V': [17,17,17,17,17,10,4],
+    'W': [17,17,17,21,21,21,10],
+    'X': [17,17,10,4,10,17,17],
+    'Y': [17,17,17,10,4,4,4],
+    'Z': [31,1,2,4,8,16,31]
+  };
+
+  function drawText(x, y, str, color = PAL.white, scale = 1) {
+    ctx.fillStyle = color;
+    let cx = Math.floor(x);
+    const cy = Math.floor(y);
+    const s = String(str).toUpperCase();
+    for (let i = 0; i < s.length; i++) {
+      const g = FONT[s[i]] || FONT[' '];
+      for (let r = 0; r < 7; r++) {
+        const row = g[r];
+        for (let c = 0; c < 5; c++) {
+          if (row & (1 << (4 - c))) {
+            ctx.fillRect(cx + c * scale, cy + r * scale, scale, scale);
+          }
+        }
+      }
+      cx += 6 * scale;
+    }
+  }
+
+  // 8-Bit NES Audio (Square-wave Engine + Countdown Beeps + Overheat Siren + Title Jingle)
   let audioCtx = null;
   let audioMuted = false;
-  let engineOsc = null;
-  let engineGain = null;
+  let engOsc = null;
+  let engGain = null;
 
   function initAudio() {
     if (audioCtx) return;
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
       audioCtx = new AC();
-      engineOsc = audioCtx.createOscillator();
-      const filter = audioCtx.createBiquadFilter();
-      engineGain = audioCtx.createGain();
-      engineOsc.type = 'sawtooth';
-      engineOsc.frequency.value = 55;
-      filter.type = 'lowpass';
-      filter.frequency.value = 420;
-      engineGain.gain.value = 0.0;
-      engineOsc.connect(filter);
-      filter.connect(engineGain);
-      engineGain.connect(audioCtx.destination);
-      engineOsc.start();
+      engOsc = audioCtx.createOscillator();
+      engGain = audioCtx.createGain();
+      engOsc.type = 'square';
+      engOsc.frequency.value = 60;
+      engGain.gain.value = 0;
+      engOsc.connect(engGain);
+      engGain.connect(audioCtx.destination);
+      engOsc.start();
     } catch (e) {}
   }
 
-  function updateEngineSound(rpmRatio, turbo, active) {
-    if (!audioCtx || !engineGain || audioMuted || !active) {
-      if (engineGain && audioCtx) engineGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.05);
+  function setEngineTone(freq, vol) {
+    if (!audioCtx || !engGain || audioMuted) {
+      if (engGain && audioCtx) engGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.02);
       return;
     }
     if (audioCtx.state === 'suspended') audioCtx.resume();
-    const baseFreq = 48 + rpmRatio * (turbo ? 165 : 115) + Math.sin(globalTick * 0.6) * 4;
-    engineOsc.frequency.setTargetAtTime(baseFreq, audioCtx.currentTime, 0.03);
-    engineGain.gain.setTargetAtTime(turbo ? 0.08 : 0.05, audioCtx.currentTime, 0.04);
+    engOsc.frequency.setTargetAtTime(freq, audioCtx.currentTime, 0.02);
+    engGain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.02);
   }
 
-  function playSfx(type) {
+  function playBeep(freq, dur, type = 'square') {
     if (audioMuted) return;
     initAudio();
     if (!audioCtx) return;
     if (audioCtx.state === 'suspended') audioCtx.resume();
     const now = audioCtx.currentTime;
-    const osc = audioCtx.createOscillator();
+    const o = audioCtx.createOscillator();
     const g = audioCtx.createGain();
-    osc.connect(g);
+    o.type = type;
+    o.frequency.setValueAtTime(freq, now);
+    g.gain.setValueAtTime(0.09, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+    o.connect(g);
     g.connect(audioCtx.destination);
+    o.start(now);
+    o.stop(now + dur);
+  }
 
-    if (type === 'stunt') {
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(440, now);
-      osc.frequency.exponentialRampToValueAtTime(880, now + 0.18);
-      g.gain.setValueAtTime(0.14, now);
-      g.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
-      osc.start(now);
-      osc.stop(now + 0.22);
-    } else if (type === 'cool') {
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(587, now);
-      osc.frequency.exponentialRampToValueAtTime(1174, now + 0.16);
-      g.gain.setValueAtTime(0.15, now);
-      g.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-      osc.start(now);
-      osc.stop(now + 0.18);
-    } else if (type === 'crash') {
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(180, now);
-      osc.frequency.exponentialRampToValueAtTime(42, now + 0.35);
-      g.gain.setValueAtTime(0.18, now);
-      g.gain.exponentialRampToValueAtTime(0.001, now + 0.36);
-      osc.start(now);
-      osc.stop(now + 0.36);
-    } else if (type === 'finish') {
-      const notes = [523, 659, 784, 1046];
-      notes.forEach((n, idx) => {
+  function playJingle(notes) {
+    if (audioMuted) return;
+    initAudio();
+    if (!audioCtx) return;
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    let t = audioCtx.currentTime;
+    notes.forEach(([f, d]) => {
+      if (f > 0) {
         const o = audioCtx.createOscillator();
-        const gn = audioCtx.createGain();
-        o.type = 'triangle';
-        o.frequency.setValueAtTime(n, now + idx * 0.09);
-        gn.gain.setValueAtTime(0.14, now + idx * 0.09);
-        gn.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.09 + 0.22);
-        o.connect(gn);
-        gn.connect(audioCtx.destination);
-        o.start(now + idx * 0.09);
-        o.stop(now + idx * 0.09 + 0.22);
-      });
-    }
+        const g = audioCtx.createGain();
+        o.type = 'square';
+        o.frequency.setValueAtTime(f, t);
+        g.gain.setValueAtTime(0.08, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + d * 0.9);
+        o.connect(g);
+        g.connect(audioCtx.destination);
+        o.start(t);
+        o.stop(t + d);
+      }
+      t += d;
+    });
   }
 
-  // Track Definitions (4 Trials Courses + 4 Stadium GP Tracks + 1 Custom Builder Track)
-  // Obstacle piece types:
-  // 'flat', 'ramp', 'mega_ramp', 'tabletop', 'whoops', 'boulders', 'logs', 'bridge', 'mud', 'cool', 'loop_arch'
-  const TRIALS_TRACKS = [
-    {
-      code: 'T-1',
-      name: 'BOULDER CREEK CANYON',
-      skyTop: '#0284c7',
-      skyBot: '#bae6fd',
-      hillFar: '#0f766e',
-      hillNear: '#15803d',
-      groundTop: '#22c55e',
-      groundBody: '#78350f',
-      bikeColor: '#f97316',
-      pieces: [
-        'flat', 'ramp', 'boulders', 'logs', 'tabletop', 'bridge',
-        'whoops', 'mega_ramp', 'boulders', 'logs', 'ramp', 'mega_ramp', 'flat'
-      ]
-    },
-    {
-      code: 'T-2',
-      name: 'RED ROCK MESA TRIALS',
-      skyTop: '#c2410c',
-      skyBot: '#fde047',
-      hillFar: '#9a3412',
-      hillNear: '#b45309',
-      groundTop: '#f59e0b',
-      groundBody: '#7c2d12',
-      bikeColor: '#ef4444',
-      pieces: [
-        'flat', 'boulders', 'mega_ramp', 'tabletop', 'logs', 'boulders',
-        'bridge', 'mega_ramp', 'whoops', 'boulders', 'mega_ramp', 'flat'
-      ]
-    },
-    {
-      code: 'T-3',
-      name: 'TIMBERYARD INDUSTRIAL PARK',
-      skyTop: '#1e293b',
-      skyBot: '#64748b',
-      hillFar: '#334155',
-      hillNear: '#475569',
-      groundTop: '#94a3b8',
-      groundBody: '#334155',
-      bikeColor: '#eab308',
-      pieces: [
-        'flat', 'logs', 'tabletop', 'boulders', 'mega_ramp', 'bridge',
-        'logs', 'whoops', 'tabletop', 'mega_ramp', 'logs', 'flat'
-      ]
-    },
-    {
-      code: 'T-4',
-      name: 'VOLCANO RIM EXTREME',
-      skyTop: '#18181b',
-      skyBot: '#7f1d1d',
-      hillFar: '#450a0a',
-      hillNear: '#991b1b',
-      groundTop: '#f87171',
-      groundBody: '#27272a',
-      bikeColor: '#38bdf8',
-      pieces: [
-        'flat', 'mega_ramp', 'boulders', 'bridge', 'mega_ramp', 'whoops',
-        'boulders', 'logs', 'tabletop', 'mega_ramp', 'mega_ramp', 'flat'
-      ]
-    }
-  ];
-
-  const STADIUM_TRACKS = [
-    {
-      code: 'M-1',
-      name: 'EMERALD STADIUM GP',
-      skyTop: '#1d4ed8',
-      skyBot: '#93c5fd',
-      hillFar: '#1e3a8a',
-      hillNear: '#15803d',
-      groundTop: '#16a34a',
-      groundBody: '#92400e',
-      bikeColor: '#ef4444',
-      pieces: [
-        'flat', 'ramp', 'cool', 'mud', 'tabletop', 'whoops',
-        'cool', 'mega_ramp', 'mud', 'ramp', 'cool', 'mega_ramp', 'flat'
-      ]
-    },
-    {
-      code: 'M-2',
-      name: 'SUNSET DUNES SUPERCROSS',
-      skyTop: '#7c2d12',
-      skyBot: '#fdba74',
-      hillFar: '#9a3412',
-      hillNear: '#d97706',
-      groundTop: '#f59e0b',
-      groundBody: '#78350f',
-      bikeColor: '#10b981',
-      pieces: [
-        'flat', 'whoops', 'cool', 'mega_ramp', 'mud', 'tabletop',
-        'cool', 'whoops', 'mega_ramp', 'mud', 'cool', 'mega_ramp', 'flat'
-      ]
-    },
-    {
-      code: 'M-3',
-      name: 'NEON NIGHT ARENA',
-      skyTop: '#090d16',
-      skyBot: '#3b0764',
-      hillFar: '#312e81',
-      hillNear: '#581c87',
-      groundTop: '#c084fc',
-      groundBody: '#1e1b4b',
-      bikeColor: '#38bdf8',
-      pieces: [
-        'flat', 'mega_ramp', 'cool', 'whoops', 'mud', 'tabletop',
-        'mega_ramp', 'cool', 'mud', 'whoops', 'mega_ramp', 'flat'
-      ]
-    },
-    {
-      code: 'M-4',
-      name: 'WORLD CHAMPIONSHIP FINALE',
-      skyTop: '#0f172a',
-      skyBot: '#1e40af',
-      hillFar: '#1e293b',
-      hillNear: '#047857',
-      groundTop: '#facc15',
-      groundBody: '#7c2d12',
-      bikeColor: '#f97316',
-      pieces: [
-        'flat', 'mega_ramp', 'whoops', 'cool', 'mud', 'mega_ramp',
-        'tabletop', 'cool', 'whoops', 'mega_ramp', 'cool', 'mega_ramp', 'flat'
-      ]
-    }
-  ];
-
-  const CUSTOM_TRACK = {
-    code: 'C-1',
-    name: 'CUSTOM BUILDER TRACK',
-    skyTop: '#0f172a',
-    skyBot: '#0284c7',
-    hillFar: '#0f766e',
-    hillNear: '#15803d',
-    groundTop: '#4ade80',
-    groundBody: '#78350f',
-    bikeColor: '#f97316',
-    pieces: [
-      'flat', 'ramp', 'cool', 'boulders', 'mega_ramp', 'tabletop',
-      'logs', 'whoops', 'cool', 'mega_ramp', 'flat'
-    ]
+  // Discrete NES Excitebike Obstacles (A through I)
+  // Each obstacle has a piecewise linear profile: ascent (w1), flat top (w2), descent (w3), height (h)
+  const OBSTACLE_DEFS = {
+    '.': { name: 'FLAT',       w1: 0,  w2: 90, w3: 0,  h: 0,  lanes: [0,1,2,3] },
+    'A': { name: 'SMALL BUMP', w1: 18, w2: 4,  w3: 18, h: 16, lanes: [0,1,2,3], stripe: 0 },
+    'B': { name: 'TABLETOP',   w1: 24, w2: 44, w3: 24, h: 24, lanes: [0,1,2,3], stripe: 1 },
+    'C': { name: 'STEEP JUMP', w1: 26, w2: 6,  w3: 26, h: 36, lanes: [0,1,2,3], stripe: 0 },
+    'D': { name: 'HIGH PLATEAU',w1:28, w2: 72, w3: 28, h: 32, lanes: [0,1,2,3], stripe: 1 },
+    'E': { name: 'TOP LANES RAMP', w1: 20, w2: 8, w3: 20, h: 22, lanes: [0,1], stripe: 0 },
+    'F': { name: 'SUPER JUMP', w1: 42, w2: 10, w3: 42, h: 58, lanes: [0,1,2,3], stripe: 1 },
+    'G': { name: 'MUD PATCH',  w1: 0,  w2: 90, w3: 0,  h: 0,  mudLanes: [0, 2] },
+    'H': { name: 'COOL ARROW', w1: 0,  w2: 80, w3: 0,  h: 0,  coolLanes: [1, 3] },
+    'I': { name: 'BOT LANES RAMP', w1: 20, w2: 8, w3: 20, h: 22, lanes: [2,3], stripe: 0 }
   };
 
-  const BUILDER_PALETTE = [
-    { id: 'flat',      label: '1: Flat Run' },
-    { id: 'ramp',      label: '2: Med Jump' },
-    { id: 'mega_ramp', label: '3: Mega Ramp' },
-    { id: 'tabletop',  label: '4: Tabletop' },
-    { id: 'whoops',    label: '5: Whoops' },
-    { id: 'boulders',  label: '6: Rock Pile' },
-    { id: 'logs',      label: '7: Giant Logs' },
-    { id: 'bridge',    label: '8: High Bridge' },
-    { id: 'mud',       label: '9: Mud Patch' },
-    { id: 'cool',      label: '0: Turbo Cool' }
+  const TRACKS = [
+    { num: 1, best: 56.0, seq: '.AB.G.C.H.D.A.F.H.B.C.' },
+    { num: 2, best: 58.0, seq: '.A.E.I.C.H.G.D.F.H.A.C.F.' },
+    { num: 3, best: 62.0, seq: '.B.G.C.A.A.H.F.D.G.H.C.F.' },
+    { num: 4, best: 64.0, seq: '.C.E.I.G.H.F.A.A.D.H.F.C.' },
+    { num: 5, best: 68.0, seq: '.F.G.C.H.D.E.I.F.G.H.F.F.' }
   ];
 
-  // Generated Terrain & Special Zones
-  const SEG_LEN = 540; // length of each track piece in world pixels
-  let trackLength = 8000;
-  let obstacles = [];    // physical bumps: boulders, logs, mud patches, cooling arrows, star rings
-  let checkpoints = [];
-  let rivals = [];
-  let particles = [];
-  let popups = [];
+  let customSeq = ['.', 'A', 'B', 'H', 'C', 'G', 'F', 'D', 'H', 'F', '.'];
 
-  // Bike State
-  const bike = {
-    x: 240,
-    y: 680,
-    vx: 0,
-    vy: 0,
-    pitch: 0,      // radians, negative = nose up (wheelie/backflip), positive = nose down
-    omega: 0,      // angular velocity
-    lane: 1,       // 0..3 for Stadium mode
-    laneY: 1.0,    // smooth visual lane interpolation
-    onGround: false,
-    frontContact: false,
-    rearContact: false,
-    frontComp: 0,
-    rearComp: 0,
-    wheelRot: 0,
-    temp: 25,      // 0..100 engine heat
-    overheated: 0, // cooldown timer when overheated
-    crashed: 0,
-    airTime: 0,
-    airRotAccum: 0,
-    wheelieTicks: 0,
-    score: 0,
-    flips: 0,
-    raceTime: 0,
-    checkpointX: 240,
-    checkpointY: 640
-  };
+  // Game State
+  let mode = 0; // 0 = Selection A, 1 = Selection B (with Rivals), 2 = Design Mode
+  let trackIdx = 0;
+  let state = 'title'; // 'title', 'countdown', 'racing', 'finished'
+  let tick = 0;
+  let countdownTimer = 0;
+  let countdownStage = 0;
 
+  let obstacles = [];
+  let lapLength = 2400;
   let cameraX = 0;
-  let cameraY = 0;
-  let bannerText = '';
-  let bannerTimer = 0;
 
-  function showBanner(msg, dur = 110) {
-    bannerText = msg;
-    bannerTimer = dur;
-  }
+  // Player Bike (NES Excitebike physics)
+  const player = {
+    x: 48,
+    z: 0,          // height off ground (>= 0)
+    vx: 0,         // forward speed
+    vz: 0,         // vertical velocity
+    lane: 1,       // 0..3 (top to bottom)
+    laneY: 1.0,    // smooth lane transition
+    laneDir: 0,    // -1 switching up, +1 switching down
+    angle: 0,      // discrete NES pitch angle: -3(loop wipeout), -2(high wheelie), -1(wheelie/up), 0(flat), +1(down), +2(steep down)
+    angleFloat: 0,
+    onGround: true,
+    temp: 20,      // 0..100 engine temperature
+    overheatTimer: 0,
+    crashState: 0, // 0=ok, 1=tumbling to grass shoulder, 2=running back to bike
+    crashTimer: 0,
+    runnerX: 0,
+    runnerY: 0,
+    lap: 1,
+    totalLaps: 2,
+    raceTime: 0
+  };
 
-  function addPopup(x, y, text, color = '#facc15') {
-    popups.push({ x, y, text, color, life: 65, maxLife: 65 });
-  }
-
-  function activeTrackDef() {
-    if (gameMode === 2) return CUSTOM_TRACK;
-    const list = gameMode === 1 ? STADIUM_TRACKS : TRIALS_TRACKS;
-    return list[((currentTrackIdx % list.length) + list.length) % list.length];
-  }
-
-  // Heightmap function for any world X coordinate
-  function baseTerrainHeight(x) {
-    const tr = activeTrackDef();
-    const baseY = 760;
-    if (x < 420) return baseY;
-    const idx = Math.floor((x - 420) / SEG_LEN);
-    if (idx < 0 || idx >= tr.pieces.length) return baseY;
-    const u = ((x - 420) - idx * SEG_LEN) / SEG_LEN; // 0..1 within piece
-    const type = tr.pieces[idx];
-
-    if (type === 'ramp') {
-      if (u > 0.25 && u < 0.72) {
-        const t = (u - 0.25) / 0.47;
-        return baseY - Math.sin(t * Math.PI) * 145;
-      }
-    } else if (type === 'mega_ramp') {
-      if (u > 0.15 && u < 0.55) {
-        const t = (u - 0.15) / 0.40;
-        return baseY - Math.pow(Math.sin(t * Math.PI * 0.5), 1.4) * 255;
-      } else if (u >= 0.55 && u < 0.75) {
-        return baseY + 55; // gap dip between launch and landing
-      } else if (u >= 0.75 && u < 0.96) {
-        const t = 1 - (u - 0.75) / 0.21;
-        return baseY - Math.sin(t * Math.PI * 0.5) * 190;
-      }
-    } else if (type === 'tabletop') {
-      if (u > 0.15 && u < 0.35) {
-        return baseY - ((u - 0.15) / 0.20) * 185;
-      } else if (u >= 0.35 && u <= 0.68) {
-        return baseY - 185;
-      } else if (u > 0.68 && u < 0.88) {
-        return baseY - (1 - (u - 0.68) / 0.20) * 185;
-      }
-    } else if (type === 'whoops') {
-      if (u > 0.1 && u < 0.9) {
-        const t = (u - 0.1) / 0.8;
-        return baseY - Math.abs(Math.sin(t * Math.PI * 5)) * 68;
-      }
-    } else if (type === 'bridge') {
-      if (u > 0.12 && u < 0.88) {
-        const t = (u - 0.12) / 0.76;
-        return baseY - Math.sin(t * Math.PI) * 160 + Math.sin(t * Math.PI * 3) * 18;
-      }
-    }
-    return baseY;
-  }
-
-  // Includes physical boulders & logs on top of the terrain
-  function getGroundY(x) {
-    let y = baseTerrainHeight(x);
-    for (let i = 0; i < obstacles.length; i++) {
-      const ob = obstacles[i];
-      if (ob.kind === 'boulder' || ob.kind === 'log') {
-        const dx = x - ob.x;
-        if (Math.abs(dx) < ob.r) {
-          const bump = Math.sqrt(Math.max(0, ob.r * ob.r - dx * dx));
-          y = Math.min(y, ob.y - bump * 0.92);
-        }
-      }
-    }
-    return y;
-  }
-
-  function getSlopeAngle(x) {
-    const h1 = getGroundY(x - 10);
-    const h2 = getGroundY(x + 10);
-    return Math.atan2(h2 - h1, 20);
-  }
+  let rivals = [];
 
   function buildTrack() {
-    const tr = activeTrackDef();
     obstacles = [];
-    checkpoints = [];
-    rivals = [];
-    particles = [];
-    popups = [];
-
-    trackLength = 420 + tr.pieces.length * SEG_LEN + 600;
-
-    tr.pieces.forEach((p, idx) => {
-      const sx = 420 + idx * SEG_LEN;
-      if (idx > 0 && idx % 3 === 0) {
-        checkpoints.push({ x: sx + 40, reached: false });
-      }
-      if (p === 'boulders') {
-        const radii = [36, 48, 42, 34];
-        radii.forEach((r, k) => {
-          const bx = sx + 140 + k * 66;
-          obstacles.push({ kind: 'boulder', x: bx, y: baseTerrainHeight(bx), r });
-        });
-      } else if (p === 'logs') {
-        [0, 1, 2].forEach((k) => {
-          const lx = sx + 175 + k * 78;
-          obstacles.push({ kind: 'log', x: lx, y: baseTerrainHeight(lx), r: 38 });
-        });
-      } else if (p === 'mud') {
-        obstacles.push({ kind: 'mud', x: sx + 160, w: 220, lane: idx % 4 });
-        obstacles.push({ kind: 'mud', x: sx + 310, w: 180, lane: (idx + 2) % 4 });
-      } else if (p === 'cool') {
-        obstacles.push({ kind: 'cool', x: sx + 220, lane: (idx * 2) % 4 });
-        obstacles.push({ kind: 'cool', x: sx + 380, lane: (idx * 2 + 1) % 4 });
-      }
-      if (p === 'mega_ramp' || p === 'ramp' || p === 'tabletop') {
-        obstacles.push({
-          kind: 'star',
-          x: sx + SEG_LEN * 0.5,
-          y: baseTerrainHeight(sx + SEG_LEN * 0.5) - 190,
-          collected: false
-        });
-      }
+    const seq = mode === 2 ? customSeq.join('') : TRACKS[trackIdx].seq;
+    let curX = 180;
+    for (let i = 0; i < seq.length; i++) {
+      const code = seq[i];
+      const def = OBSTACLE_DEFS[code] || OBSTACLE_DEFS['.'];
+      const totalW = def.w1 + def.w2 + def.w3;
+      obstacles.push({
+        code,
+        def,
+        x: curX,
+        w: totalW
+      });
+      curX += totalW + 52;
+    }
+    // Add Finish / Lap Overpass Ramp at end of lap
+    obstacles.push({
+      code: 'FIN',
+      def: { name: 'FINISH GATE', w1: 28, w2: 36, w3: 28, h: 26, lanes: [0,1,2,3], stripe: 1 },
+      x: curX,
+      w: 92
     });
+    lapLength = curX + 140;
+  }
 
-    // Spawn AI Motocross Rivals in Stadium GP mode
-    if (gameMode === 1) {
-      const colors = ['#38bdf8', '#facc15', '#a855f7', '#22c55e'];
-      for (let i = 0; i < 4; i++) {
+  // Returns { h, slope } at world X and lane (0..3)
+  // slope: -1 = going UP ramp, 0 = FLAT, +1 = going DOWN ramp
+  function sampleTrack(wx, lane) {
+    const wrappedX = ((wx % lapLength) + lapLength) % lapLength;
+    for (let i = 0; i < obstacles.length; i++) {
+      const ob = obstacles[i];
+      if (wrappedX >= ob.x && wrappedX <= ob.x + ob.w) {
+        const d = ob.def;
+        if (d.h > 0 && d.lanes && d.lanes.includes(lane)) {
+          const u = wrappedX - ob.x;
+          if (u < d.w1) {
+            return { h: (u / d.w1) * d.h, slope: -1 };
+          } else if (u <= d.w1 + d.w2) {
+            return { h: d.h, slope: 0 };
+          } else {
+            return { h: (1 - (u - d.w1 - d.w2) / d.w3) * d.h, slope: 1 };
+          }
+        }
+        return {
+          h: 0,
+          slope: 0,
+          inMud: d.mudLanes && d.mudLanes.includes(lane),
+          inCool: d.coolLanes && d.coolLanes.includes(lane)
+        };
+      }
+    }
+    return { h: 0, slope: 0, inMud: false, inCool: false };
+  }
+
+  function startRace() {
+    buildTrack();
+    player.x = 44;
+    player.z = 0;
+    player.vx = 0;
+    player.vz = 0;
+    player.lane = 1;
+    player.laneY = 1.0;
+    player.laneDir = 0;
+    player.angle = 0;
+    player.angleFloat = 0;
+    player.onGround = true;
+    player.temp = 20;
+    player.overheatTimer = 0;
+    player.crashState = 0;
+    player.crashTimer = 0;
+    player.lap = 1;
+    player.raceTime = 0;
+    cameraX = 0;
+
+    rivals = [];
+    if (mode === 1) {
+      const rColors = [
+        { jersey: '#0078f8', bike: '#3cbcfc' },
+        { jersey: '#f8b800', bike: '#fcfcfc' },
+        { jersey: '#00a800', bike: '#b8f818' }
+      ];
+      for (let i = 0; i < 3; i++) {
         rivals.push({
-          x: 320 + i * 95,
-          y: 740,
-          vx: 8.2 + i * 0.45,
-          vy: 0,
-          pitch: 0,
-          lane: i,
-          color: colors[i],
-          crashed: 0
+          x: 44,
+          z: 0,
+          vx: 0,
+          vz: 0,
+          targetSpeed: 2.35 + i * 0.18,
+          lane: (i === 1) ? 2 : (i === 0 ? 0 : 3),
+          laneY: (i === 1) ? 2 : (i === 0 ? 0 : 3),
+          angle: 0,
+          crashed: 0,
+          colors: rColors[i]
         });
       }
     }
 
-    resetBike(false);
-    showBanner(`${tr.code}: ${tr.name}`, 130);
+    state = 'countdown';
+    countdownTimer = 180;
+    countdownStage = 3;
+    playBeep(440, 0.18);
   }
 
-  function resetBike(fromCheckpoint) {
-    bike.x = fromCheckpoint ? bike.checkpointX : 220;
-    bike.y = getGroundY(bike.x) - 42;
-    bike.vx = 0;
-    bike.vy = 0;
-    bike.pitch = 0;
-    bike.omega = 0;
-    bike.lane = 1;
-    bike.laneY = 1.0;
-    bike.onGround = true;
-    bike.frontComp = 0;
-    bike.rearComp = 0;
-    bike.temp = 25;
-    bike.overheated = 0;
-    bike.crashed = 0;
-    bike.airTime = 0;
-    bike.airRotAccum = 0;
-    bike.wheelieTicks = 0;
-    if (!fromCheckpoint) {
-      bike.score = 0;
-      bike.flips = 0;
-      bike.raceTime = 0;
-      bike.checkpointX = 220;
-    }
-    cameraX = Math.max(0, bike.x - 420);
-    cameraY = 0;
-  }
-
-  // Input Handling (Keyboard + Screen Gestures + Virtual Buttons + Gyro Tilt)
+  // Input Handling
   const keys = {};
   const prevKeys = {};
-  let touchMode = 'screen'; // 'screen' or 'buttons'
+  let touchMode = 'screen';
   let tiltEnabled = false;
   let tiltGamma = 0;
-
-  const touchState = {
-    gas: false,
-    turbo: false,
-    brake: false,
-    left: false,
-    right: false,
-    up: false,
-    down: false
-  };
+  const touchState = { gas: false, turbo: false, left: false, right: false, up: false, down: false };
 
   window.addEventListener('keydown', (e) => {
     initAudio();
@@ -508,16 +358,17 @@
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
       e.preventDefault();
     }
-    if (gameMode === 2) {
-      // Builder hotkeys 1..0
-      const numIdx = ['Digit1','Digit2','Digit3','Digit4','Digit5','Digit6','Digit7','Digit8','Digit9','Digit0'].indexOf(e.code);
-      if (numIdx >= 0 && CUSTOM_TRACK.pieces.length < 18) {
-        CUSTOM_TRACK.pieces.splice(CUSTOM_TRACK.pieces.length - 1, 0, BUILDER_PALETTE[numIdx].id);
+    // Design mode obstacle keys A-I
+    if (mode === 2) {
+      const k = e.key.toUpperCase();
+      if (OBSTACLE_DEFS[k] && customSeq.length < 24) {
+        customSeq.splice(customSeq.length - 1, 0, k);
         buildTrack();
-        playSfx('cool');
-      } else if (e.code === 'Backspace' && CUSTOM_TRACK.pieces.length > 3) {
-        CUSTOM_TRACK.pieces.splice(CUSTOM_TRACK.pieces.length - 2, 1);
+        playBeep(660, 0.08);
+      } else if (e.code === 'Backspace' && customSeq.length > 3) {
+        customSeq.splice(customSeq.length - 2, 1);
         buildTrack();
+        playBeep(330, 0.08);
       }
     }
   });
@@ -526,126 +377,120 @@
     keys[e.code] = false;
   });
 
-  // Direct Screen Touch Gestures & Canvas Clicks
-  const activeTouches = new Map();
+  // Direct Screen Touch & Design Palette Clicks
+  const activePointers = new Map();
   canvas.addEventListener('pointerdown', (e) => {
     initAudio();
     const rect = canvas.getBoundingClientRect();
     const cx = ((e.clientX - rect.left) / rect.width) * W;
     const cy = ((e.clientY - rect.top) / rect.height) * H;
 
-    // If on Title or Finished screen, start immediately
-    if (gameState === 'title' || gameState === 'finished') {
-      gameState = 'playing';
-      resetBike(false);
+    if (state === 'title' || state === 'finished') {
+      if (cy > 110 && cy < 165) {
+        const sel = Math.floor((cy - 112) / 16);
+        if (sel >= 0 && sel <= 2) setGameMode(sel);
+      }
+      startRace();
       return;
     }
 
-    // Track Builder Palette Clicks
-    if (gameMode === 2 && cy > 115 && cy < 210) {
-      const bIdx = Math.floor((cx - 120) / 168);
-      if (bIdx >= 0 && bIdx < BUILDER_PALETTE.length && CUSTOM_TRACK.pieces.length < 18) {
-        CUSTOM_TRACK.pieces.splice(CUSTOM_TRACK.pieces.length - 1, 0, BUILDER_PALETTE[bIdx].id);
+    // Design Mode Top Bar Clicks
+    if (mode === 2 && cy < 36) {
+      const codes = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'];
+      const idx = Math.floor((cx - 8) / 34);
+      if (idx >= 0 && idx < codes.length && customSeq.length < 24) {
+        customSeq.splice(customSeq.length - 1, 0, codes[idx]);
         buildTrack();
-        playSfx('cool');
+        playBeep(660, 0.08);
         return;
       }
     }
 
-    activeTouches.set(e.pointerId, { startX: cx, startY: cy, x: cx, y: cy });
-    syncScreenGestures();
+    activePointers.set(e.pointerId, { startX: cx, startY: cy, x: cx, y: cy });
+    syncPointers();
   });
 
   canvas.addEventListener('pointermove', (e) => {
-    if (!activeTouches.has(e.pointerId)) return;
+    if (!activePointers.has(e.pointerId)) return;
     const rect = canvas.getBoundingClientRect();
-    const t = activeTouches.get(e.pointerId);
-    t.x = ((e.clientX - rect.left) / rect.width) * W;
-    t.y = ((e.clientY - rect.top) / rect.height) * H;
-    syncScreenGestures();
+    const p = activePointers.get(e.pointerId);
+    p.x = ((e.clientX - rect.left) / rect.width) * W;
+    p.y = ((e.clientY - rect.top) / rect.height) * H;
+    syncPointers();
   });
 
-  function endPointer(e) {
-    activeTouches.delete(e.pointerId);
-    syncScreenGestures();
+  function removePointer(e) {
+    activePointers.delete(e.pointerId);
+    syncPointers();
   }
-  canvas.addEventListener('pointerup', endPointer);
-  canvas.addEventListener('pointercancel', endPointer);
+  canvas.addEventListener('pointerup', removePointer);
+  canvas.addEventListener('pointercancel', removePointer);
 
-  function syncScreenGestures() {
+  function syncPointers() {
     if (touchMode !== 'screen') return;
     touchState.gas = false;
     touchState.turbo = false;
-    touchState.brake = false;
     touchState.left = false;
     touchState.right = false;
     touchState.up = false;
     touchState.down = false;
 
-    for (const t of activeTouches.values()) {
-      if (t.startX > W * 0.52) {
-        // Right side: Gas / Turbo
-        touchState.gas = true;
-        if (t.y < H * 0.48) touchState.turbo = true;
+    for (const p of activePointers.values()) {
+      if (p.startX > W * 0.5) {
+        if (p.y < H * 0.48) touchState.turbo = true;
+        else touchState.gas = true;
       } else {
-        // Left side thumbstick: Lean Left/Right & Lane Up/Down
-        const dx = t.x - t.startX;
-        const dy = t.y - t.startY;
-        if (dx < -24) touchState.left = true;
-        else if (dx > 24) touchState.right = true;
-        if (dy < -28) touchState.up = true;
-        else if (dy > 28) touchState.down = true;
+        const dx = p.x - p.startX;
+        const dy = p.y - p.startY;
+        if (dx < -10) touchState.left = true;
+        else if (dx > 10) touchState.right = true;
+        if (dy < -10) touchState.up = true;
+        else if (dy > 10) touchState.down = true;
       }
     }
   }
 
-  // Virtual Arcade Buttons
   document.querySelectorAll('.tbtn').forEach((btn) => {
     const act = btn.getAttribute('data-act');
-    const setAct = (v) => {
+    const setV = (v) => {
       touchState[act] = v;
       btn.classList.toggle('pressed', v);
     };
     btn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       initAudio();
-      if (gameState !== 'playing') gameState = 'playing';
-      setAct(true);
+      if (state === 'title' || state === 'finished') startRace();
+      setV(true);
     });
-    btn.addEventListener('pointerup', () => setAct(false));
-    btn.addEventListener('pointerleave', () => setAct(false));
-    btn.addEventListener('pointercancel', () => setAct(false));
+    btn.addEventListener('pointerup', () => setV(false));
+    btn.addEventListener('pointerleave', () => setV(false));
+    btn.addEventListener('pointercancel', () => setV(false));
   });
 
-  // Topbar UI Buttons
-  function setMode(m) {
-    gameMode = m;
-    currentTrackIdx = 0;
-    document.getElementById('btn-mode-trials').classList.toggle('active', m === 0);
-    document.getElementById('btn-mode-stadium').classList.toggle('active', m === 1);
-    document.getElementById('btn-mode-editor').classList.toggle('active', m === 2);
-    gameState = 'playing';
-    buildTrack();
+  function setGameMode(m) {
+    mode = m;
+    document.getElementById('btn-sel-a').classList.toggle('active', m === 0);
+    document.getElementById('btn-sel-b').classList.toggle('active', m === 1);
+    document.getElementById('btn-design').classList.toggle('active', m === 2);
+    startRace();
   }
 
-  document.getElementById('btn-mode-trials').addEventListener('click', () => setMode(0));
-  document.getElementById('btn-mode-stadium').addEventListener('click', () => setMode(1));
-  document.getElementById('btn-mode-editor').addEventListener('click', () => setMode(2));
+  document.getElementById('btn-sel-a').addEventListener('click', () => setGameMode(0));
+  document.getElementById('btn-sel-b').addEventListener('click', () => setGameMode(1));
+  document.getElementById('btn-design').addEventListener('click', () => setGameMode(2));
 
-  document.getElementById('btn-prev-track').addEventListener('click', () => {
-    currentTrackIdx = (currentTrackIdx + 3) % 4;
-    buildTrack();
-  });
-  document.getElementById('btn-next-track').addEventListener('click', () => {
-    currentTrackIdx = (currentTrackIdx + 1) % 4;
-    buildTrack();
+  const btnTrack = document.getElementById('btn-track');
+  btnTrack.addEventListener('click', () => {
+    trackIdx = (trackIdx + 1) % TRACKS.length;
+    btnTrack.textContent = `TRACK ${trackIdx + 1}`;
+    startRace();
   });
 
+  const btnTouch = document.getElementById('btn-touch');
   const touchOverlay = document.getElementById('touch-overlay');
-  const btnTouchMode = document.getElementById('btn-touch-mode');
-  btnTouchMode.addEventListener('click', () => {
+  btnTouch.addEventListener('click', () => {
     touchMode = touchMode === 'screen' ? 'buttons' : 'screen';
-    btnTouchMode.textContent = touchMode === 'screen' ? '📱 Touch: SCREEN' : '🕹️ Touch: BUTTONS';
+    btnTouch.textContent = touchMode === 'screen' ? 'TOUCH: SCREEN' : 'TOUCH: BUTTONS';
     touchOverlay.classList.toggle('visible', touchMode === 'buttons');
   });
 
@@ -653,828 +498,721 @@
   btnTilt.addEventListener('click', async () => {
     if (!tiltEnabled && typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function') {
-      try {
-        const res = await DeviceOrientationEvent.requestPermission();
-        if (res !== 'granted') return;
-      } catch (e) {}
+      try { await DeviceOrientationEvent.requestPermission(); } catch (e) {}
     }
     tiltEnabled = !tiltEnabled;
-    btnTilt.textContent = tiltEnabled ? '📐 Tilt: ON' : '📐 Tilt: OFF';
+    btnTilt.textContent = tiltEnabled ? 'TILT: ON' : 'TILT: OFF';
     btnTilt.classList.toggle('active', tiltEnabled);
   });
 
   window.addEventListener('deviceorientation', (e) => {
     if (!tiltEnabled) return;
     const g = (window.innerWidth > window.innerHeight) ? (e.beta || 0) : (e.gamma || 0);
-    tiltGamma = Math.max(-35, Math.min(35, g));
+    tiltGamma = Math.max(-30, Math.min(30, g));
   });
 
   const btnMute = document.getElementById('btn-mute');
   btnMute.addEventListener('click', () => {
     audioMuted = !audioMuted;
-    btnMute.textContent = audioMuted ? '🔇 Audio: OFF' : '🔊 Audio: ON';
+    btnMute.textContent = audioMuted ? 'AUDIO: OFF' : 'AUDIO: ON';
   });
 
-  document.getElementById('btn-fullscreen').addEventListener('click', () => {
-    const wrap = document.getElementById('app-shell');
-    if (!document.fullscreenElement) wrap.requestFullscreen?.();
+  document.getElementById('btn-fs').addEventListener('click', () => {
+    const shell = document.getElementById('app-shell');
+    if (!document.fullscreenElement) shell.requestFullscreen?.();
     else document.exitFullscreen?.();
   });
 
-  // Physics & Game Update
-  function spawnDirtRoost(x, y, vx, color) {
-    for (let i = 0; i < 2; i++) {
-      particles.push({
-        x,
-        y,
-        vx: vx - 2 - Math.random() * 4,
-        vy: -2 - Math.random() * 4,
-        r: 3 + Math.random() * 4,
-        color,
-        life: 24 + Math.random() * 14
-      });
-    }
+  function triggerCrash() {
+    player.crashState = 1;
+    player.crashTimer = 85;
+    player.runnerX = player.x;
+    player.runnerY = 172; // bottom grass shoulder
+    player.angle = 0;
+    player.angleFloat = 0;
+    playBeep(110, 0.35, 'sawtooth');
   }
 
   function update() {
-    globalTick++;
-    if (bannerTimer > 0) bannerTimer--;
+    tick++;
 
-    const kGas   = keys['ArrowRight'] || keys['KeyD'] || keys['Space'] || touchState.gas;
-    const kTurbo = keys['KeyZ'] || keys['ShiftLeft'] || keys['ShiftRight'] || keys['KeyX'] || touchState.turbo;
-    const kBrake = keys['ArrowLeft'] || keys['KeyA'] || touchState.brake;
-    const kLeanL = keys['ArrowUp'] || keys['KeyW'] || keys['KeyQ'] || touchState.left || (tiltEnabled && tiltGamma < -7);
-    const kLeanR = keys['ArrowDown'] || keys['KeyS'] || keys['KeyE'] || touchState.right || (tiltEnabled && tiltGamma > 7);
-    const kLaneUp   = (keys['ArrowUp'] && !prevKeys['ArrowUp']) || (keys['KeyW'] && !prevKeys['KeyW']) || touchState.up;
-    const kLaneDown = (keys['ArrowDown'] && !prevKeys['ArrowDown']) || (keys['KeyS'] && !prevKeys['KeyS']) || touchState.down;
+    const kGas   = keys['Space'] || keys['KeyX'] || keys['KeyK'] || touchState.gas;
+    const kTurbo = keys['KeyZ'] || keys['ShiftLeft'] || keys['ShiftRight'] || keys['KeyJ'] || touchState.turbo;
+    const kLeft  = keys['ArrowLeft'] || keys['KeyA'] || touchState.left || (tiltEnabled && tiltGamma < -6);
+    const kRight = keys['ArrowRight'] || keys['KeyD'] || touchState.right || (tiltEnabled && tiltGamma > 6);
+    const kUp    = keys['ArrowUp'] || keys['KeyW'] || touchState.up;
+    const pUp    = prevKeys['ArrowUp'] || prevKeys['KeyW'];
+    const kDown  = keys['ArrowDown'] || keys['KeyS'] || touchState.down;
+    const pDown  = prevKeys['ArrowDown'] || prevKeys['KeyS'];
 
-    if (keys['KeyR'] && !prevKeys['KeyR']) {
-      gameState = 'playing';
-      resetBike(true);
-    }
-
-    if (gameState === 'title' || gameState === 'finished') {
-      updateEngineSound(0, false, false);
+    if (state === 'title') {
+      setEngineTone(0, 0);
+      if (kUp && !pUp) mode = (mode + 2) % 3;
+      if (kDown && !pDown) mode = (mode + 1) % 3;
       if ((keys['Enter'] && !prevKeys['Enter']) || (keys['Space'] && !prevKeys['Space'])) {
-        gameState = 'playing';
-        resetBike(false);
+        setGameMode(mode);
       }
       return;
     }
 
-    if (bike.crashed > 0) {
-      updateEngineSound(0, false, false);
-      bike.crashed--;
-      if (bike.crashed === 0) {
-        resetBike(true);
+    if (state === 'finished') {
+      setEngineTone(0, 0);
+      if ((keys['Enter'] && !prevKeys['Enter']) || (keys['Space'] && !prevKeys['Space'])) {
+        startRace();
       }
       return;
     }
 
-    bike.raceTime += 1 / 60;
-
-    // Lane switching in Stadium Mode (or hybrid when on ground)
-    if (gameMode === 1 && bike.onGround) {
-      if (kLaneUp && bike.lane > 0) {
-        bike.lane--;
-        touchState.up = false;
-      } else if (kLaneDown && bike.lane < 3) {
-        bike.lane++;
-        touchState.down = false;
+    if (state === 'countdown') {
+      setEngineTone(kGas || kTurbo ? 95 : 55, 0.04);
+      countdownTimer--;
+      if (countdownTimer === 120 || countdownTimer === 60) {
+        countdownStage--;
+        playBeep(440, 0.18);
+      } else if (countdownTimer <= 0) {
+        state = 'racing';
+        playBeep(880, 0.35);
       }
+      return;
     }
-    bike.laneY += (bike.lane - bike.laneY) * 0.18;
 
-    // Engine Temperature & Turbo Boost
-    let usingTurbo = kTurbo && bike.overheated === 0;
-    if (bike.overheated > 0) {
-      bike.overheated--;
-      bike.temp = Math.max(30, bike.temp - 0.55);
-    } else if (usingTurbo) {
-      bike.temp = Math.min(100, bike.temp + 0.34);
-      if (bike.temp >= 100) {
-        bike.overheated = 135;
-        showBanner('ENGINE OVERHEATED! HIT COOLING ARROWS!', 95);
-        playSfx('crash');
+    // Racing Clock
+    player.raceTime += 1 / 60;
+
+    // Handle Crash / Rider Running Back to Bike on Grass Shoulder!
+    if (player.crashState > 0) {
+      setEngineTone(0, 0);
+      // Mash A or B to recover faster, just like NES Excitebike!
+      if ((kGas && !prevKeys['Space']) || (kTurbo && !prevKeys['KeyZ'])) {
+        player.crashTimer -= 5;
+      }
+      player.crashTimer--;
+      if (player.crashTimer < 45) player.crashState = 2; // Rider running back up to lane
+      if (player.crashTimer <= 0) {
+        player.crashState = 0;
+        player.vx = 0.8;
+        player.z = 0;
+        player.vz = 0;
+        player.angle = 0;
+        player.angleFloat = 0;
+      }
+      return;
+    }
+
+    // Handle Overheat Stall on Track Shoulder
+    if (player.overheatTimer > 0) {
+      player.vx *= 0.92;
+      player.overheatTimer--;
+      player.temp = Math.max(25, player.temp - 0.55);
+      setEngineTone(tick % 16 < 8 ? 320 : 220, 0.05);
+      if (player.overheatTimer === 0) {
+        player.temp = 25;
+      }
+      player.x += player.vx;
+      cameraX = player.x - 64;
+      return;
+    }
+
+    // Sample current track under bike
+    const curLane = Math.round(player.laneY);
+    const trk = sampleTrack(player.x, curLane);
+
+    // Cooling Arrow & Mud Check
+    if (player.onGround && trk.inCool) {
+      if (player.temp > 20) playBeep(980, 0.1);
+      player.temp = 16;
+    }
+
+    // Engine Temperature Update (A = normal gas, B = turbo gas)
+    const activeTurbo = kTurbo;
+    const activeGas = kGas || kTurbo;
+    if (activeTurbo) {
+      player.temp = Math.min(100, player.temp + 0.28);
+      if (player.temp >= 100) {
+        player.overheatTimer = 180; // 3 seconds overheat stall
+        playBeep(260, 0.4, 'sawtooth');
+        return;
+      }
+    } else if (activeGas) {
+      if (player.temp < 52) player.temp += 0.06;
+      else player.temp -= 0.12;
+    } else {
+      player.temp = Math.max(18, player.temp - 0.24);
+    }
+
+    // Lane Changing (Up / Down when on ground)
+    if (player.onGround) {
+      if (kUp && player.laneY > 0) {
+        player.laneY = Math.max(0, player.laneY - 0.065);
+        player.laneDir = -1;
+      } else if (kDown && player.laneY < 3) {
+        player.laneY = Math.min(3, player.laneY + 0.065);
+        player.laneDir = 1;
+      } else {
+        // Snap gently toward nearest lane center
+        const nearest = Math.round(player.laneY);
+        player.laneY += (nearest - player.laneY) * 0.2;
+        player.laneDir = 0;
       }
     } else {
-      bike.temp = Math.max(22, bike.temp - 0.22);
+      player.laneDir = 0;
     }
 
-    // Two-Wheel Positions
-    const wheelbase = 48;
-    const cosP = Math.cos(bike.pitch);
-    const sinP = Math.sin(bike.pitch);
-    const rx = bike.x - cosP * wheelbase;
-    const ry = bike.y - sinP * wheelbase;
-    const fx = bike.x + cosP * wheelbase;
-    const fy = bike.y + sinP * wheelbase;
+    // Forward Speed & Acceleration
+    let topSpeed = activeTurbo ? 3.55 : (activeGas ? 2.65 : 0);
+    if (player.onGround && trk.inMud && player.angle >= 0) {
+      topSpeed = Math.min(topSpeed, 1.15); // Mud bogs you down unless wheelieing!
+    }
+    if (player.onGround && trk.slope === -1) {
+      topSpeed *= 0.85; // climbing steep ramp
+    } else if (player.onGround && trk.slope === 1) {
+      topSpeed *= 1.12; // riding down ramp
+    }
 
-    const gRear = getGroundY(rx) - 22;
-    const gFront = getGroundY(fx) - 22;
+    if (activeGas) {
+      if (player.vx < topSpeed) player.vx = Math.min(topSpeed, player.vx + (activeTurbo ? 0.065 : 0.045));
+      else player.vx = Math.max(topSpeed, player.vx - 0.04);
+    } else {
+      player.vx = Math.max(0, player.vx - 0.03);
+    }
 
-    bike.rearContact = ry >= gRear - 6;
-    bike.frontContact = fy >= gFront - 6;
-    bike.onGround = bike.rearContact || bike.frontContact;
+    // Previous track sample vs new X position
+    const prevSlope = trk.slope;
+    player.x += player.vx;
+    const nextTrk = sampleTrack(player.x, Math.round(player.laneY));
 
-    // Suspension Spring Compression
-    bike.rearComp = bike.rearContact ? Math.min(14, Math.max(0, ry - gRear + 6)) : bike.rearComp * 0.8;
-    bike.frontComp = bike.frontContact ? Math.min(14, Math.max(0, fy - gFront + 6)) : bike.frontComp * 0.8;
+    // Vertical & Ramp Launch / Landing Physics
+    if (player.onGround) {
+      // Did we just crest the top of a ramp (slope -1 -> 0 or -1 -> +1)?
+      if (prevSlope === -1 && nextTrk.slope >= 0 && player.vx > 1.3) {
+        player.onGround = false;
+        player.vz = player.vx * 0.95;
+        player.z = nextTrk.h + player.vz;
+        player.angleFloat = -1.0;
+        player.angle = -1;
+        playBeep(320, 0.09);
+      } else if (nextTrk.h < player.z - 2 && player.vx > 1.5) {
+        // Dropped off a plateau edge
+        player.onGround = false;
+        player.vz = 0.2;
+      } else {
+        player.z = nextTrk.h;
+        player.vz = 0;
 
-    const slope = getSlopeAngle(bike.x);
-
-    // Check Mud & Cooling Boost Arrows
-    let inMud = false;
-    for (let i = 0; i < obstacles.length; i++) {
-      const ob = obstacles[i];
-      if (ob.kind === 'mud' && Math.abs(bike.x - (ob.x + ob.w * 0.5)) < ob.w * 0.5) {
-        if (gameMode !== 1 || ob.lane === bike.lane) {
-          if (bike.onGround) inMud = true;
-        }
-      } else if (ob.kind === 'cool' && Math.abs(bike.x - ob.x) < 42) {
-        if (gameMode !== 1 || ob.lane === bike.lane) {
-          if (bike.temp > 25 || bike.overheated > 0) {
-            bike.temp = 20;
-            bike.overheated = 0;
-            bike.vx = Math.max(bike.vx, 14.5);
-            playSfx('cool');
-            addPopup(bike.x, bike.y - 60, 'COOL BOOST!', '#38bdf8');
+        // Ground Wheelie Control (Left = pull wheelie up, Right = drop nose flat)
+        if (kLeft) {
+          player.angleFloat -= 0.085;
+          if (player.angleFloat < -2.75) {
+            // Tipped too far backward -> Loop-out Crash!
+            triggerCrash();
+            return;
           }
+        } else if (kRight) {
+          player.angleFloat = Math.min(0, player.angleFloat + 0.12);
+        } else {
+          // Follow ramp slope when on ramp
+          const targetA = nextTrk.slope;
+          player.angleFloat += (targetA - player.angleFloat) * 0.22;
         }
-      } else if (ob.kind === 'star' && !ob.collected) {
-        if (Math.hypot(bike.x - ob.x, bike.y - ob.y) < 62) {
-          ob.collected = true;
-          bike.score += 500;
-          playSfx('stunt');
-          addPopup(ob.x, ob.y, '+500 STAR RING!', '#facc15');
-        }
+        player.angle = Math.max(-2, Math.min(2, Math.round(player.angleFloat)));
       }
-    }
+    } else {
+      // Mid-Air Flight!
+      player.z += player.vz;
+      player.vz -= 0.12; // NES gravity
 
-    // Checkpoints
-    checkpoints.forEach((cp) => {
-      if (!cp.reached && bike.x >= cp.x) {
-        cp.reached = true;
-        bike.checkpointX = cp.x;
-        playSfx('cool');
-        addPopup(cp.x, bike.y - 70, 'CHECKPOINT!', '#4ade80');
-      }
-    });
+      // Mid-Air Pitch Control (Left = nose UP, Right = nose DOWN)
+      if (kLeft) player.angleFloat = Math.max(-2.3, player.angleFloat - 0.075);
+      else if (kRight) player.angleFloat = Math.min(2.3, player.angleFloat + 0.075);
+      player.angle = Math.max(-2, Math.min(2, Math.round(player.angleFloat)));
 
-    // Throttle, Brake, and Angular Torque
-    const maxSpeed = bike.overheated > 0 ? 3.5 : (inMud ? 5.5 : (usingTurbo ? 16.5 : 12.2));
-    const accel = usingTurbo ? 0.46 : 0.31;
+      // Check Landing on Ground / Ramp
+      if (player.z <= nextTrk.h) {
+        player.z = nextTrk.h;
+        player.onGround = true;
+        player.vz = 0;
 
-    if (bike.onGround) {
-      // Landing check
-      if (bike.airTime > 18) {
-        const diff = Math.abs(Math.atan2(Math.sin(bike.pitch - slope), Math.cos(bike.pitch - slope)));
-        if (diff < 0.36) {
-          bike.score += 500;
-          bike.vx = Math.min(maxSpeed + 2.5, bike.vx + 1.6);
-          addPopup(bike.x, bike.y - 65, '+500 PERFECT LANDING!', '#4ade80');
-          playSfx('stunt');
-        } else if (diff > 1.45) {
-          // Rider landed upside down -> Crash!
-          bike.crashed = 55;
-          playSfx('crash');
-          showBanner('WIPEOUT! PRESS R OR WAIT TO RESPAWN', 55);
-          spawnDirtRoost(bike.x, bike.y, 0, '#ef4444');
+        // Compare bike discrete angle (-2..+2) with landing slope (-1, 0, +1)
+        const idealAngle = nextTrk.slope === 1 ? 1 : (nextTrk.slope === -1 ? -1 : 0);
+        const diff = Math.abs(player.angle - idealAngle);
+        if (diff === 0) {
+          // Perfect slope-matched landing -> slight speed boost!
+          player.vx = Math.min(3.8, player.vx + 0.25);
+        } else if (diff === 1) {
+          // Slight bounce -> small speed loss
+          player.vx *= 0.78;
+        } else {
+          // Bad landing angle -> CRASH!
+          triggerCrash();
           return;
         }
-      }
-      bike.airTime = 0;
-      bike.airRotAccum = 0;
-
-      if (kGas && bike.overheated === 0) {
-        bike.vx += accel * Math.cos(slope);
-        if (bike.vx > maxSpeed) bike.vx = maxSpeed;
-        // Natural wheelie torque when gunning throttle
-        if (usingTurbo && gameMode !== 1) bike.omega -= 0.0045;
-        if (globalTick % 2 === 0) {
-          spawnDirtRoost(rx - 14, ry + 16, bike.vx * 0.2, inMud ? '#451a03' : '#92400e');
-        }
-      } else if (kBrake) {
-        bike.vx -= 0.35;
-        if (bike.vx < -3.5) bike.vx = -3.5;
-      } else {
-        bike.vx *= inMud ? 0.88 : 0.975;
-      }
-
-      // Gravity along slope
-      bike.vx += Math.sin(slope) * 0.22;
-
-      // Align bike pitch toward terrain slope unless pulling a wheelie
-      const targetPitch = slope;
-      if (kLeanL) {
-        bike.omega -= 0.014;
-      } else if (kLeanR) {
-        bike.omega += 0.014;
-      } else {
-        bike.omega += (targetPitch - bike.pitch) * 0.16;
-      }
-      bike.omega *= 0.80;
-      bike.pitch += bike.omega;
-
-      // Wheelie detection & bonus
-      if (bike.rearContact && !bike.frontContact && bike.pitch < slope - 0.22 && bike.vx > 3) {
-        bike.wheelieTicks++;
-        if (bike.wheelieTicks % 45 === 0) {
-          bike.score += 250;
-          addPopup(bike.x, bike.y - 55, '+250 WHEELIE!', '#fb923c');
-        }
-      } else {
-        bike.wheelieTicks = 0;
-      }
-
-      // Keep bike supported above terrain
-      const gCenter = (gRear + gFront) * 0.5;
-      if (bike.y > gCenter) {
-        const launchSlope = getSlopeAngle(bike.x - 8);
-        bike.y = gCenter;
-        // Launch velocity if riding up a ramp
-        if (launchSlope < -0.14 && bike.vx > 5.0) {
-          bike.vy = Math.sin(launchSlope) * bike.vx * 1.18;
-        } else {
-          bike.vy = 0;
-        }
-      }
-    } else {
-      // Mid-Air Physics & Backflip / Frontflip Rotation
-      bike.airTime++;
-      bike.vy += 0.42; // gravity
-      if (kLeanL) bike.omega -= 0.016;
-      else if (kLeanR) bike.omega += 0.016;
-      bike.omega *= 0.95;
-      bike.pitch += bike.omega;
-      bike.airRotAccum += bike.omega;
-
-      // Full 360 Flip Detection!
-      if (Math.abs(bike.airRotAccum) >= Math.PI * 1.85) {
-        const isBackflip = bike.airRotAccum < 0;
-        bike.flips++;
-        bike.score += 1000;
-        bike.airRotAccum = 0;
-        playSfx('stunt');
-        addPopup(bike.x, bike.y - 75, isBackflip ? '+1000 BACKFLIP!' : '+1000 FRONTFLIP!', '#facc15');
+        player.angleFloat = nextTrk.slope;
+        player.angle = nextTrk.slope;
       }
     }
 
-    bike.x += bike.vx;
-    bike.y += bike.vy;
-    bike.wheelRot += bike.vx * 0.08;
-
-    // Rider Helmet Crash check if upside down on ground
-    const headX = bike.x + Math.sin(bike.pitch) * 44;
-    const headY = bike.y - Math.cos(bike.pitch) * 44;
-    if (headY >= getGroundY(headX) - 6) {
-      bike.crashed = 55;
-      playSfx('crash');
-      showBanner('RIDER DOWN! RESPAWNING AT CHECKPOINT...', 55);
-      return;
+    // Lap & Finish Check
+    const currentLap = Math.floor(player.x / lapLength) + 1;
+    if (currentLap > player.lap) {
+      player.lap = currentLap;
+      if (player.lap > player.totalLaps) {
+        state = 'finished';
+        playJingle([
+          [523, 0.12], [659, 0.12], [784, 0.12], [1046, 0.28],
+          [784, 0.12], [1046, 0.35]
+        ]);
+        return;
+      } else {
+        playBeep(784, 0.2);
+      }
     }
 
-    // Update AI Rivals in Stadium Mode
+    // Update CPU Rivals (Selection B)
     rivals.forEach((rv) => {
       if (rv.crashed > 0) {
         rv.crashed--;
         return;
       }
+      rv.vx += (rv.targetSpeed - rv.vx) * 0.05;
+      const rPrev = sampleTrack(rv.x, Math.round(rv.laneY));
       rv.x += rv.vx;
-      const gy = getGroundY(rv.x) - 22;
-      if (rv.y < gy) {
-        rv.vy += 0.40;
-        rv.y += rv.vy;
-      } else {
-        rv.y = gy;
-        rv.vy = 0;
-        rv.pitch = getSlopeAngle(rv.x);
-      }
-      // Bike-to-Rival Collision in same lane
-      if (Math.abs(bike.laneY - rv.lane) < 0.55 && Math.abs(bike.x - rv.x) < 58 && Math.abs(bike.y - rv.y) < 48) {
-        if (bike.x >= rv.x) {
-          // Player clipped rival with rear wheel!
-          rv.crashed = 65;
-          bike.score += 400;
-          addPopup(rv.x, rv.y - 50, '+400 RIVAL TAKEDOWN!', '#f97316');
-          playSfx('stunt');
+      const rNext = sampleTrack(rv.x, Math.round(rv.laneY));
+      if (rv.z <= rNext.h) {
+        if (rPrev.slope === -1 && rNext.slope >= 0 && rv.vx > 1.5) {
+          rv.vz = rv.vx * 0.85;
+          rv.z = rNext.h + rv.vz;
+          rv.angle = -1;
         } else {
-          bike.vx *= 0.55;
+          rv.z = rNext.h;
+          rv.vz = 0;
+          rv.angle = rNext.slope;
+        }
+      } else {
+        rv.z += rv.vz;
+        rv.vz -= 0.12;
+        rv.angle = rv.vz > 0 ? -1 : 1;
+      }
+
+      // Rival vs Player Collision (Rear-Wheel Clipping!)
+      const dx = player.x - rv.x;
+      const dLane = Math.abs(player.laneY - rv.laneY);
+      const dz = Math.abs(player.z - rv.z);
+      if (dLane < 0.55 && dz < 12 && Math.abs(dx) < 16) {
+        if (dx >= 0) {
+          // Player is slightly ahead -> Player's rear wheel clips Rival's front wheel!
+          rv.crashed = 65;
+          rv.vx = 0;
+          playBeep(520, 0.12);
+        } else {
+          // Player rammed into the back of Rival -> Player crashes!
+          triggerCrash();
         }
       }
     });
 
-    // Finish Gate check
-    if (bike.x >= trackLength - 320) {
-      gameState = 'finished';
-      bike.score += 2500;
-      playSfx('finish');
-      showBanner('FINISH LINE CROSSED! TRACK COMPLETE!', 180);
-    }
+    cameraX = player.x - 64;
 
-    // Smooth Look-Ahead Camera
-    const targetCamX = Math.max(0, bike.x - 460 + bike.vx * 14);
-    cameraX += (targetCamX - cameraX) * 0.14;
-    const targetCamY = Math.min(0, (bike.y - 680) * 0.45);
-    cameraY += (targetCamY - cameraY) * 0.12;
-
-    // Particles & Popups
-    for (let i = particles.length - 1; i >= 0; i--) {
-      const p = particles[i];
-      p.x += p.vx;
-      p.y += p.vy;
-      p.vy += 0.25;
-      if (--p.life <= 0) particles.splice(i, 1);
-    }
-    for (let i = popups.length - 1; i >= 0; i--) {
-      const pp = popups[i];
-      pp.y -= 1.2;
-      if (--pp.life <= 0) popups.splice(i, 1);
-    }
-
-    updateEngineSound(Math.min(1, Math.abs(bike.vx) / 14), usingTurbo, true);
+    // Continuous Square-Wave NES Engine Pitch
+    const freq = 52 + player.vx * 36 + (activeTurbo ? 28 : 0) + (player.onGround ? 0 : 35);
+    setEngineTone(freq, 0.045);
   }
 
-  // Drawing Helpers
-  function drawBike(x, y, pitch, color, wheelRot, frontComp, rearComp, isTurbo, crashed) {
+  // Pixel-Art NES Excitebike Sprite Renderer
+  // Draws the iconic 8-bit bike + rider at 5 discrete angles (-2, -1, 0, +1, +2)
+  function drawPixelBike(sx, sy, angle, jerseyCol, bikeCol, wheelPhase, isCrashing) {
     ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(pitch + (crashed ? Math.sin(globalTick * 0.5) * 0.4 : 0));
+    ctx.translate(Math.floor(sx), Math.floor(sy));
 
-    const wheelbase = 48;
-    // Turbo Exhaust Flame
-    if (isTurbo && !crashed) {
-      const fl = 28 + Math.random() * 24;
-      const grad = ctx.createLinearGradient(-34, -8, -34 - fl, -8);
-      grad.addColorStop(0, '#38bdf8');
-      grad.addColorStop(0.45, '#f97316');
-      grad.addColorStop(1, 'rgba(239,68,68,0)');
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.moveTo(-30, -14);
-      ctx.lineTo(-34 - fl, -6);
-      ctx.lineTo(-30, 0);
-      ctx.closePath();
-      ctx.fill();
+    if (isCrashing) {
+      // Tumbling bike on track
+      ctx.rotate((tick * 0.4) % (Math.PI * 2));
+    } else {
+      ctx.rotate(angle * 0.34);
     }
 
-    // Wheels (with suspension compression offset)
-    const drawWheel = (wx, wy) => {
-      ctx.save();
-      ctx.translate(wx, wy);
-      ctx.rotate(wheelRot);
-      // Knobby Tire
-      ctx.fillStyle = '#0f172a';
-      ctx.beginPath();
-      ctx.arc(0, 0, 23, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = '#334155';
-      ctx.stroke();
-      // Rim & Spokes
-      ctx.fillStyle = '#e2e8f0';
-      ctx.beginPath();
-      ctx.arc(0, 0, 13, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#64748b';
-      ctx.lineWidth = 2;
-      for (let s = 0; s < 4; s++) {
-        const a = (s * Math.PI) / 4;
-        ctx.beginPath();
-        ctx.moveTo(-Math.cos(a) * 12, -Math.sin(a) * 12);
-        ctx.lineTo(Math.cos(a) * 12, Math.sin(a) * 12);
-        ctx.stroke();
+    // Rear & Front 8-bit Wheels
+    const drawPixelWheel = (wx, wy) => {
+      ctx.fillStyle = PAL.black;
+      ctx.fillRect(wx - 4, wy - 4, 8, 8);
+      ctx.fillStyle = PAL.white;
+      ctx.fillRect(wx - 2, wy - 2, 4, 4);
+      // Spoke flicker
+      ctx.fillStyle = PAL.gray;
+      if (wheelPhase & 1) {
+        ctx.fillRect(wx - 3, wy, 6, 1);
+      } else {
+        ctx.fillRect(wx, wy - 3, 1, 6);
       }
-      ctx.restore();
     };
 
-    const rWy = 12 - rearComp;
-    const fWy = 12 - frontComp;
-    drawWheel(-wheelbase, rWy);
-    drawWheel(wheelbase, fWy);
+    drawPixelWheel(-8, -4);
+    drawPixelWheel(8, -4);
 
-    // Rear Swingarm & Golden Coil Spring
-    ctx.strokeStyle = '#94a3b8';
-    ctx.lineWidth = 6;
-    ctx.beginPath();
-    ctx.moveTo(-10, -4);
-    ctx.lineTo(-wheelbase, rWy);
-    ctx.stroke();
+    // Engine & Swingarm
+    ctx.fillStyle = PAL.gray;
+    ctx.fillRect(-6, -8, 10, 4);
 
-    ctx.strokeStyle = '#facc15';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(-16, -18);
-    ctx.lineTo(-30, rWy - 4);
-    ctx.stroke();
+    // Bike Chassis & Fenders
+    ctx.fillStyle = bikeCol;
+    ctx.fillRect(-10, -10, 18, 3);
+    ctx.fillRect(4, -13, 5, 6); // front fairing/forks
 
-    // Front Inverted Telescopic Forks
-    ctx.strokeStyle = '#cbd5e1';
-    ctx.lineWidth = 6;
-    ctx.beginPath();
-    ctx.moveTo(18, -28);
-    ctx.lineTo(wheelbase, fWy);
-    ctx.stroke();
-
-    // Engine Block & Chrome Exhaust Pipe
-    ctx.fillStyle = '#475569';
-    ctx.beginPath();
-    ctx.roundRect(-14, -18, 26, 20, 5);
-    ctx.fill();
-    ctx.strokeStyle = '#e2e8f0';
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.moveTo(4, -8);
-    ctx.lineTo(-34, -10);
-    ctx.stroke();
-
-    // Motocross Frame, Tank & Fenders
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.moveTo(-42, -22);
-    ctx.lineTo(-8, -24);
-    ctx.lineTo(22, -32);
-    ctx.lineTo(44, -22);
-    ctx.lineTo(14, -12);
-    ctx.lineTo(-22, -12);
-    ctx.closePath();
-    ctx.fill();
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = '#0f172a';
-    ctx.stroke();
-
-    // Rider (Articulated Legs, Jersey, Arms, Helmet & Goggles)
-    ctx.fillStyle = '#1e293b'; // Boots/Pants
-    ctx.beginPath();
-    ctx.roundRect(-18, -32, 12, 22, 5);
-    ctx.fill();
-
-    ctx.fillStyle = color; // Jersey
-    ctx.beginPath();
-    ctx.roundRect(-18, -54, 20, 25, 7);
-    ctx.fill();
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    // Rider Arm reaching handlebars
-    ctx.strokeStyle = '#fde047';
-    ctx.lineWidth = 6;
-    ctx.beginPath();
-    ctx.moveTo(-4, -46);
-    ctx.lineTo(18, -30);
-    ctx.stroke();
-
-    // Motocross Helmet + Visor + Cyan Goggles
-    ctx.fillStyle = '#f8fafc';
-    ctx.beginPath();
-    ctx.arc(-4, -66, 14, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 3;
-    ctx.stroke();
-
-    ctx.fillStyle = '#38bdf8';
-    ctx.beginPath();
-    ctx.roundRect(2, -70, 9, 7, 2);
-    ctx.fill();
+    if (!isCrashing) {
+      // Rider Boots & Blue Pants
+      ctx.fillStyle = PAL.white;
+      ctx.fillRect(-5, -12, 4, 4);
+      // Rider Jersey
+      ctx.fillStyle = jerseyCol;
+      ctx.fillRect(-6, -18, 6, 6);
+      // Rider Arm reaching handlebars
+      ctx.fillStyle = PAL.skin;
+      ctx.fillRect(0, -16, 5, 2);
+      // Rider White/Red Helmet + Visor
+      ctx.fillStyle = PAL.white;
+      ctx.fillRect(-4, -24, 7, 6);
+      ctx.fillStyle = jerseyCol;
+      ctx.fillRect(-4, -21, 7, 2);
+      ctx.fillStyle = PAL.black;
+      ctx.fillRect(1, -23, 2, 2);
+    }
 
     ctx.restore();
   }
 
   function render() {
-    const tr = activeTrackDef();
+    // 1. Top Stadium Grandstands & Infield (Y = 0..88)
+    ctx.fillStyle = PAL.bleacherBlue;
+    ctx.fillRect(0, 0, W, 32);
 
-    // 1. Sky Gradient
-    const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
-    skyGrad.addColorStop(0, tr.skyTop);
-    skyGrad.addColorStop(1, tr.skyBot);
-    ctx.fillStyle = skyGrad;
-    ctx.fillRect(0, 0, W, H);
-
-    // Sun / Stadium Floodlights
-    ctx.fillStyle = 'rgba(254, 240, 138, 0.22)';
-    ctx.beginPath();
-    ctx.arc(1540, 170, 130, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#fef08a';
-    ctx.beginPath();
-    ctx.arc(1540, 170, 58, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 2. Parallax Mountains & Stadium Grandstands
-    ctx.fillStyle = tr.hillFar;
-    for (let i = -1; i < 6; i++) {
-      const mx = i * 480 - ((cameraX * 0.18) % 480);
-      ctx.beginPath();
-      ctx.moveTo(mx, H);
-      ctx.lineTo(mx + 240, 440);
-      ctx.lineTo(mx + 480, H);
-      ctx.closePath();
-      ctx.fill();
+    // Stadium Crowd Dots (scrolling slowly)
+    const crowdScroll = Math.floor(cameraX * 0.25) % 16;
+    for (let y = 4; y < 28; y += 6) {
+      for (let x = -crowdScroll; x < W; x += 8) {
+        ctx.fillStyle = ((x + y) & 8) ? PAL.white : PAL.red;
+        ctx.fillRect(x, y, 3, 3);
+        ctx.fillStyle = PAL.yellow;
+        ctx.fillRect(x + 4, y + 2, 3, 3);
+      }
     }
 
-    ctx.fillStyle = tr.hillNear;
-    for (let i = -1; i < 7; i++) {
-      const nx = i * 380 - ((cameraX * 0.35) % 380);
-      ctx.beginPath();
-      ctx.arc(nx + 190, H - 140, 220, Math.PI, 0);
-      ctx.fill();
+    // Stadium Wall
+    ctx.fillStyle = PAL.white;
+    ctx.fillRect(0, 32, W, 6);
+    ctx.fillStyle = PAL.red;
+    ctx.fillRect(0, 34, W, 2);
+
+    // Green Infield Turf (Y = 38..88)
+    ctx.fillStyle = PAL.turfGreen;
+    ctx.fillRect(0, 38, W, 50);
+
+    // Infield Hurdles, Track Number Signs & Trophy Podium
+    const propOffset = Math.floor(cameraX) % 320;
+    for (let k = -1; k <= 1; k++) {
+      const px = k * 320 - propOffset;
+      // Red/White Hurdles
+      ctx.fillStyle = PAL.white;
+      ctx.fillRect(px + 60, 64, 24, 10);
+      ctx.fillStyle = PAL.red;
+      ctx.fillRect(px + 64, 64, 6, 4);
+      ctx.fillRect(px + 76, 64, 6, 4);
+
+      // Track Number Sign
+      ctx.fillStyle = PAL.blue;
+      ctx.fillRect(px + 170, 52, 22, 20);
+      ctx.strokeStyle = PAL.white;
+      ctx.strokeRect(px + 170, 52, 22, 20);
+      drawText(px + 178, 58, String(trackIdx + 1), PAL.white, 1);
+
+      // Winner Podium in Infield
+      ctx.fillStyle = PAL.white;
+      ctx.fillRect(px + 250, 56, 44, 18);
+      ctx.fillStyle = PAL.red;
+      ctx.fillRect(px + 264, 48, 16, 8);
+      drawText(px + 254, 62, '0:58:0', PAL.black, 1);
     }
 
-    ctx.save();
-    ctx.translate(0, -cameraY);
-
-    // 3. Terrain Heightmap Polygon + 4-Lane Stadium Lines
-    ctx.fillStyle = tr.groundBody;
-    ctx.beginPath();
-    ctx.moveTo(0, H + 300);
-    for (let sx = 0; sx <= W + 24; sx += 16) {
-      const wx = sx + cameraX;
-      ctx.lineTo(sx, baseTerrainHeight(wx));
+    // 2. Top Curb Border (Red & White Alternating Blocks at Y = 88..94)
+    const curbOff = Math.floor(cameraX) % 16;
+    for (let x = -curbOff; x < W; x += 16) {
+      ctx.fillStyle = PAL.red;
+      ctx.fillRect(x, 88, 8, 6);
+      ctx.fillStyle = PAL.white;
+      ctx.fillRect(x + 8, 88, 8, 6);
     }
-    ctx.lineTo(W, H + 300);
-    ctx.closePath();
-    ctx.fill();
 
-    // Stadium 4-Lane Stripes
-    if (gameMode === 1) {
+    // 3. The 4-Lane Tan Dirt Track (Y = 94..166, 18px per lane)
+    ctx.fillStyle = PAL.dirt;
+    ctx.fillRect(0, 94, W, 72);
+
+    // Dashed Lane Dividers
+    ctx.fillStyle = PAL.laneLine;
+    const dashOff = Math.floor(cameraX) % 12;
+    for (let l = 1; l <= 3; l++) {
+      const ly = 94 + l * 18;
+      for (let x = -dashOff; x < W; x += 12) {
+        ctx.fillRect(x, ly, 6, 1);
+      }
+    }
+
+    // Bottom Curb & Green Grass Shoulder (Y = 166..184)
+    for (let x = -curbOff; x < W; x += 16) {
+      ctx.fillStyle = PAL.white;
+      ctx.fillRect(x, 166, 8, 5);
+      ctx.fillStyle = PAL.red;
+      ctx.fillRect(x + 8, 166, 8, 5);
+    }
+    ctx.fillStyle = PAL.turfGreen;
+    ctx.fillRect(0, 171, W, 13);
+
+    // Starting Line Gate Stalls (at X = 44)
+    const startSx = Math.floor(44 - cameraX);
+    if (startSx > -30 && startSx < W) {
       for (let l = 0; l < 4; l++) {
-        ctx.strokeStyle = l % 2 === 0 ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.18)';
-        ctx.lineWidth = 22;
-        ctx.beginPath();
-        for (let sx = 0; sx <= W + 24; sx += 24) {
-          const wx = sx + cameraX;
-          const gy = baseTerrainHeight(wx) + 12 + l * 28;
-          if (sx === 0) ctx.moveTo(sx, gy);
-          else ctx.lineTo(sx, gy);
+        const ly = 94 + l * 18;
+        ctx.fillStyle = PAL.white;
+        ctx.fillRect(startSx + 10, ly + 2, 4, 15);
+        ctx.fillStyle = state === 'countdown' ? PAL.red : PAL.turfGreen;
+        ctx.fillRect(startSx + 14, ly + 2, 3, 15);
+      }
+    }
+
+    // 4. Render Discrete NES Obstacles (Trapezoidal Ramps with Striped Sides, Mud Pits, Cool Arrows)
+    for (let lap = 0; lap <= 2; lap++) {
+      const lapBaseX = lap * lapLength;
+      for (let i = 0; i < obstacles.length; i++) {
+        const ob = obstacles[i];
+        const sx = Math.floor(lapBaseX + ob.x - cameraX);
+        if (sx + ob.w < -20 || sx > W + 20) continue;
+        const d = ob.def;
+
+        // Mud Pits
+        if (d.mudLanes) {
+          d.mudLanes.forEach((ln) => {
+            const my = 96 + ln * 18;
+            ctx.fillStyle = PAL.mud;
+            ctx.fillRect(sx, my, ob.w, 14);
+            ctx.fillStyle = PAL.dirtDark;
+            ctx.fillRect(sx + 6, my + 4, ob.w - 12, 3);
+            ctx.fillRect(sx + 14, my + 9, ob.w - 28, 2);
+          });
         }
-        ctx.stroke();
+
+        // Cooling Boost Arrows (>>)
+        if (d.coolLanes) {
+          d.coolLanes.forEach((ln) => {
+            const cy = 97 + ln * 18;
+            ctx.fillStyle = PAL.yellow;
+            ctx.fillRect(sx + 16, cy, 28, 12);
+            drawText(sx + 20, cy + 3, '>>', PAL.red, 1);
+          });
+        }
+
+        // Trapezoidal 3D NES Ramps
+        if (d.h > 0 && d.lanes) {
+          const topLane = d.lanes[0];
+          const botLane = d.lanes[d.lanes.length - 1];
+          const yTop = 94 + topLane * 18;
+          const yBot = 94 + (botLane + 1) * 18;
+
+          // Ramp Surface Polygon (shifted up by d.h at peak)
+          ctx.fillStyle = ob.code === 'FIN' ? PAL.white : PAL.dirtDark;
+          ctx.beginPath();
+          ctx.moveTo(sx, yTop);
+          ctx.lineTo(sx + d.w1, yTop - d.h);
+          ctx.lineTo(sx + d.w1 + d.w2, yTop - d.h);
+          ctx.lineTo(sx + ob.w, yTop);
+          ctx.lineTo(sx + ob.w, yBot);
+          ctx.lineTo(sx + d.w1 + d.w2, yBot - d.h);
+          ctx.lineTo(sx + d.w1, yBot - d.h);
+          ctx.lineTo(sx, yBot);
+          ctx.closePath();
+          ctx.fill();
+
+          // Crisp Black Outlines on Ramp Edges
+          ctx.strokeStyle = PAL.black;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+
+          // Iconic Red/White or Blue/Yellow Striped Front Skirt at yBot!
+          const c1 = d.stripe ? PAL.blue : PAL.red;
+          const c2 = d.stripe ? PAL.yellow : PAL.white;
+          for (let rx = 0; rx < ob.w; rx += 4) {
+            let rh = d.h;
+            if (rx < d.w1) rh = (rx / d.w1) * d.h;
+            else if (rx > d.w1 + d.w2) rh = (1 - (rx - d.w1 - d.w2) / d.w3) * d.h;
+            ctx.fillStyle = ((rx >> 2) & 1) ? c1 : c2;
+            ctx.fillRect(sx + rx, Math.floor(yBot - rh), 4, Math.ceil(rh));
+          }
+
+          if (ob.code === 'FIN') {
+            drawText(sx + d.w1 + 4, yTop - d.h + 8, 'FINISH', PAL.red, 1);
+          }
+        }
       }
     }
 
-    // Lush Top Grass / Track Rim Crust
-    ctx.strokeStyle = tr.groundTop;
-    ctx.lineWidth = 14;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    for (let sx = 0; sx <= W + 24; sx += 16) {
-      const wx = sx + cameraX;
-      const gy = baseTerrainHeight(wx);
-      if (sx === 0) ctx.moveTo(sx, gy);
-      else ctx.lineTo(sx, gy);
-    }
-    ctx.stroke();
-
-    // 4. Obstacles: Boulders, Logs, Mud Puddles, Cooling Chevrons, Star Rings
-    obstacles.forEach((ob) => {
-      const sx = ob.x - cameraX;
-      if (sx < -300 || sx > W + 300) return;
-
-      if (ob.kind === 'boulder') {
-        const grad = ctx.createRadialGradient(sx - ob.r * 0.3, ob.y - ob.r * 0.5, 4, sx, ob.y, ob.r);
-        grad.addColorStop(0, '#94a3b8');
-        grad.addColorStop(1, '#334155');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(sx, ob.y - ob.r * 0.15, ob.r, Math.PI, 0);
-        ctx.closePath();
-        ctx.fill();
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = '#0f172a';
-        ctx.stroke();
-      } else if (ob.kind === 'log') {
-        const ly = ob.y - ob.r * 0.45;
-        ctx.fillStyle = '#78350f';
-        ctx.beginPath();
-        ctx.arc(sx, ly, ob.r * 0.85, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#fde68a';
-        ctx.beginPath();
-        ctx.arc(sx, ly, ob.r * 0.62, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = '#92400e';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(sx, ly, ob.r * 0.35, 0, Math.PI * 2);
-        ctx.stroke();
-      } else if (ob.kind === 'mud') {
-        const laneOff = gameMode === 1 ? ob.lane * 28 : 0;
-        const my = baseTerrainHeight(ob.x) + laneOff;
-        ctx.fillStyle = '#451a03';
-        ctx.beginPath();
-        ctx.roundRect(sx, my - 6, ob.w, 20, 8);
-        ctx.fill();
-      } else if (ob.kind === 'cool') {
-        const laneOff = gameMode === 1 ? ob.lane * 28 : 0;
-        const cy = baseTerrainHeight(ob.x) + laneOff;
-        ctx.fillStyle = '#38bdf8';
-        ctx.beginPath();
-        ctx.roundRect(sx - 30, cy - 10, 60, 18, 6);
-        ctx.fill();
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 16px sans-serif';
-        ctx.fillText('>>>', sx - 16, cy + 4);
-      } else if (ob.kind === 'star' && !ob.collected) {
-        const pulse = Math.sin(globalTick * 0.1) * 4;
-        ctx.strokeStyle = '#facc15';
-        ctx.lineWidth = 6;
-        ctx.beginPath();
-        ctx.arc(sx, ob.y + pulse, 26, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-    });
-
-    // Checkpoints & Finish Banner
-    checkpoints.forEach((cp) => {
-      const sx = cp.x - cameraX;
-      const gy = baseTerrainHeight(cp.x);
-      ctx.fillStyle = '#f8fafc';
-      ctx.fillRect(sx, gy - 110, 6, 110);
-      ctx.fillStyle = cp.reached ? '#22c55e' : '#f97316';
-      ctx.beginPath();
-      ctx.moveTo(sx + 6, gy - 110);
-      ctx.lineTo(sx + 56, gy - 92);
-      ctx.lineTo(sx + 6, gy - 74);
-      ctx.closePath();
-      ctx.fill();
-    });
-
-    const finX = trackLength - 320 - cameraX;
-    if (finX > -200 && finX < W + 200) {
-      const fgy = baseTerrainHeight(trackLength - 320);
-      ctx.fillStyle = '#f8fafc';
-      ctx.fillRect(finX, fgy - 180, 10, 180);
-      ctx.fillStyle = '#facc15';
-      ctx.fillRect(finX - 60, fgy - 180, 130, 36);
-      ctx.fillStyle = '#0f172a';
-      ctx.font = '900 20px sans-serif';
-      ctx.fillText('FINISH', finX - 32, fgy - 155);
-    }
-
-    // 5. AI Rival Riders (Stadium Mode)
+    // 5. Render Rivals & Player Bike (sorted by lane Y so lower lanes overlap higher lanes)
+    const entities = [];
     rivals.forEach((rv) => {
-      const sx = rv.x - cameraX;
-      if (sx < -150 || sx > W + 150) return;
-      const laneOff = rv.lane * 28;
-      drawBike(sx, rv.y + laneOff, rv.pitch, rv.color, globalTick * 0.4, 2, 2, false, rv.crashed > 0);
-    });
-
-    // 6. Player Bike
-    const pLaneOff = gameMode === 1 ? bike.laneY * 28 : 0;
-    const isTurbo = (keys['KeyZ'] || keys['ShiftLeft'] || keys['ShiftRight'] || touchState.turbo) && bike.overheated === 0;
-    drawBike(
-      bike.x - cameraX,
-      bike.y + pLaneOff,
-      bike.pitch,
-      tr.bikeColor,
-      bike.wheelRot,
-      bike.frontComp,
-      bike.rearComp,
-      isTurbo,
-      bike.crashed > 0
-    );
-
-    // 7. Particles & Score Popups
-    particles.forEach((p) => {
-      ctx.fillStyle = p.color;
-      ctx.beginPath();
-      ctx.arc(p.x - cameraX, p.y + pLaneOff, p.r, 0, Math.PI * 2);
-      ctx.fill();
-    });
-
-    popups.forEach((pp) => {
-      ctx.fillStyle = pp.color;
-      ctx.font = '900 26px sans-serif';
-      ctx.shadowColor = '#000';
-      ctx.shadowBlur = 6;
-      ctx.fillText(pp.text, pp.x - cameraX - 60, pp.y);
-      ctx.shadowBlur = 0;
-    });
-
-    ctx.restore();
-
-    // 8. Top HUD Bar (Speedometer, Engine Temp/Overheat Bar, Score, Flips, Time)
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
-    ctx.beginPath();
-    ctx.roundRect(28, 18, W - 56, 76, 16);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(249, 115, 22, 0.5)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    const mph = Math.round(Math.abs(bike.vx) * 6.5);
-    ctx.fillStyle = '#facc15';
-    ctx.font = '900 26px sans-serif';
-    ctx.fillText(`${tr.code}: ${tr.name}`, 52, 54);
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '700 16px sans-serif';
-    ctx.fillText(
-      gameMode === 0 ? 'MODE: TRIALS & STUNT OBSTACLES' : gameMode === 1 ? 'MODE: 4-LANE STADIUM MOTOCROSS' : 'MODE: CUSTOM TRACK BUILDER',
-      52,
-      78
-    );
-
-    ctx.fillStyle = '#f8fafc';
-    ctx.font = '900 26px sans-serif';
-    ctx.fillText(`SPEED: ${mph} MPH`, 610, 62);
-    ctx.fillText(`SCORE: ${String(bike.score).padStart(6, '0')}`, 900, 62);
-    ctx.fillStyle = '#4ade80';
-    ctx.fillText(`FLIPS: ${bike.flips}`, 1210, 62);
-    ctx.fillStyle = '#38bdf8';
-    ctx.fillText(`TIME: ${bike.raceTime.toFixed(1)}s`, 1390, 62);
-
-    // Engine Temp / Turbo Bar
-    ctx.fillStyle = '#cbd5e1';
-    ctx.font = '800 15px sans-serif';
-    ctx.fillText(bike.overheated > 0 ? '🔥 OVERHEATED!' : 'ENGINE TEMP (Z=TURBO)', 1610, 44);
-    ctx.fillStyle = '#1e293b';
-    ctx.beginPath();
-    ctx.roundRect(1610, 52, 245, 22, 8);
-    ctx.fill();
-    const tempCol = bike.temp > 80 ? '#ef4444' : bike.temp > 55 ? '#f97316' : '#22c55e';
-    ctx.fillStyle = tempCol;
-    ctx.beginPath();
-    ctx.roundRect(1612, 54, Math.max(8, (bike.temp / 100) * 241), 18, 6);
-    ctx.fill();
-
-    // Track Builder Palette Bar (Mode 2)
-    if (gameMode === 2) {
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
-      ctx.beginPath();
-      ctx.roundRect(96, 110, W - 192, 92, 14);
-      ctx.fill();
-      BUILDER_PALETTE.forEach((item, idx) => {
-        const bx = 115 + idx * 168;
-        ctx.fillStyle = '#1e293b';
-        ctx.beginPath();
-        ctx.roundRect(bx, 122, 156, 48, 8);
-        ctx.fill();
-        ctx.strokeStyle = '#f97316';
-        ctx.stroke();
-        ctx.fillStyle = '#f8fafc';
-        ctx.font = '700 15px sans-serif';
-        ctx.fillText(item.label, bx + 12, 151);
+      entities.push({
+        isPlayer: false,
+        x: rv.x,
+        laneY: rv.laneY,
+        z: rv.z,
+        angle: rv.angle,
+        crashed: rv.crashed > 0,
+        jersey: rv.colors.jersey,
+        bike: rv.colors.bike,
+        wheelPhase: Math.floor(rv.x * 0.5)
       });
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = '700 15px sans-serif';
-      ctx.fillText(
-        `CLICK OR PRESS KEYS 1-0 TO ADD TRACK PIECE (${CUSTOM_TRACK.pieces.length} SEGMENTS)  |  BACKSPACE = REMOVE LAST  |  RIDE IMMEDIATELY BELOW!`,
-        125,
-        192
+    });
+    entities.push({
+      isPlayer: true,
+      x: player.x,
+      laneY: player.laneY,
+      z: player.z,
+      angle: player.angle,
+      crashed: player.crashState === 1,
+      jersey: PAL.red,
+      bike: PAL.white,
+      wheelPhase: Math.floor(player.x * 0.5)
+    });
+
+    entities.sort((a, b) => a.laneY - b.laneY);
+
+    entities.forEach((ent) => {
+      const sx = ent.x - cameraX;
+      const groundY = 106 + ent.laneY * 18;
+      // Black Ground Shadow when airborne
+      if (ent.z > 2) {
+        ctx.fillStyle = PAL.black;
+        ctx.fillRect(Math.floor(sx - 9), Math.floor(groundY - 2), 18, 3);
+      }
+      drawPixelBike(
+        sx,
+        groundY - ent.z,
+        ent.angle,
+        ent.jersey,
+        ent.bike,
+        ent.wheelPhase,
+        ent.crashed
       );
+    });
+
+    // If Player Crashed -> Draw Little Pixel Rider Running on Bottom Grass Shoulder!
+    if (player.crashState > 0) {
+      const rx = Math.floor(player.x - cameraX - (player.crashTimer * 0.35));
+      const ry = player.crashState === 1 ? 176 : 106 + Math.floor(player.laneY * 18);
+      const leg = (tick >> 2) & 1;
+      ctx.fillStyle = PAL.white;
+      ctx.fillRect(rx - 2, ry - 14, 5, 5); // helmet
+      ctx.fillStyle = PAL.red;
+      ctx.fillRect(rx - 2, ry - 9, 5, 5);  // jersey
+      ctx.fillStyle = PAL.blue;
+      ctx.fillRect(rx - 2 + (leg ? -2 : 1), ry - 4, 2, 4);
+      ctx.fillRect(rx + (leg ? 2 : -1), ry - 4, 2, 4);
+      drawText(W / 2 - 54, 72, 'MASH A/B TO RECOVER!', PAL.white, 1);
     }
 
-    // Banner Popup
-    if (bannerTimer > 0) {
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
-      ctx.beginPath();
-      ctx.roundRect(W * 0.5 - 380, 215, 760, 54, 14);
-      ctx.fill();
-      ctx.fillStyle = '#facc15';
-      ctx.font = '900 26px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(bannerText, W * 0.5, 250);
-      ctx.textAlign = 'left';
+    // Countdown Traffic Light Box
+    if (state === 'countdown') {
+      ctx.fillStyle = PAL.black;
+      ctx.fillRect(136, 44, 48, 22);
+      ctx.strokeStyle = PAL.white;
+      ctx.strokeRect(136, 44, 48, 22);
+      for (let i = 0; i < 3; i++) {
+        ctx.fillStyle = (3 - countdownStage >= i) ? PAL.red : PAL.gray;
+        ctx.fillRect(142 + i * 14, 50, 8, 10);
+      }
     }
 
-    // Title / Finish Modal Card
-    if (gameState === 'title' || gameState === 'finished') {
-      ctx.fillStyle = 'rgba(9, 13, 22, 0.86)';
-      ctx.beginPath();
-      ctx.roundRect(W * 0.5 - 500, H * 0.5 - 230, 1000, 460, 24);
-      ctx.fill();
-      ctx.strokeStyle = '#f97316';
-      ctx.lineWidth = 3;
-      ctx.stroke();
+    // Classic NES "OVER HEAT" Flashing Box on Track
+    if (player.overheatTimer > 0 && (tick & 8)) {
+      ctx.fillStyle = PAL.black;
+      ctx.fillRect(118, 118, 84, 20);
+      ctx.strokeStyle = PAL.red;
+      ctx.strokeRect(118, 118, 84, 20);
+      drawText(132, 125, 'OVER HEAT', PAL.white, 1);
+    }
 
-      ctx.textAlign = 'center';
-      ctx.fillStyle = '#facc15';
-      ctx.font = '900 54px sans-serif';
-      ctx.fillText(
-        gameState === 'finished' ? '🏆 TRACK COMPLETE! 🏆' : '🏍️ SUPER DIRT BIKE HD',
-        W * 0.5,
-        H * 0.5 - 140
-      );
+    // Design Mode Palette Overlay at Top
+    if (mode === 2) {
+      ctx.fillStyle = 'rgba(0,0,0,0.85)';
+      ctx.fillRect(0, 0, W, 34);
+      const codes = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'];
+      codes.forEach((c, idx) => {
+        const bx = 8 + idx * 34;
+        ctx.fillStyle = PAL.bleacherBlue;
+        ctx.fillRect(bx, 4, 30, 16);
+        drawText(bx + 4, 8, `${c}:${OBSTACLE_DEFS[c].name.slice(0,3)}`, PAL.white, 1);
+      });
+      drawText(8, 24, 'TAP A-I OR PRESS KEYS A-I TO ADD OBSTACLE (BKSP=DEL)', PAL.yellow, 1);
+    }
 
-      ctx.fillStyle = '#38bdf8';
-      ctx.font = '800 26px sans-serif';
-      ctx.fillText(
-        'PHYSICS TRIALS STUNT COURSES  +  4-LANE EXCITEBIKE STADIUM GP  +  TRACK BUILDER',
-        W * 0.5,
-        H * 0.5 - 82
-      );
+    // 6. Authentic NES Bottom Black & Blue Dashboard (Y = 184..240)
+    ctx.fillStyle = PAL.black;
+    ctx.fillRect(0, 184, W, 56);
 
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = '700 22px sans-serif';
-      ctx.fillText('GAS: Right Arrow / D / Space   |   TURBO BOOST: Z / Shift   |   BRAKE: Left / A', W * 0.5, H * 0.5 - 15);
-      ctx.fillText('LEAN / BACKFLIP (Air) & LANE SWITCH (Stadium): Up / Down / W / S / Tilt', W * 0.5, H * 0.5 + 28);
-      ctx.fillText('PULL BACKFLIPS (+1000), WHEELIES (+250) & SLOPE-MATCHED LANDINGS (+500)!', W * 0.5, H * 0.5 + 72);
+    // Left Box: TEMP Gauge
+    ctx.fillStyle = PAL.bleacherBlue;
+    ctx.fillRect(10, 192, 96, 40);
+    ctx.strokeStyle = PAL.white;
+    ctx.strokeRect(10, 192, 96, 40);
+    drawText(38, 198, 'TEMP', PAL.white, 1);
+    ctx.fillStyle = PAL.black;
+    ctx.fillRect(18, 212, 80, 12);
+    const tempW = Math.floor((player.temp / 100) * 76);
+    ctx.fillStyle = (player.temp > 78 && (tick & 4)) ? PAL.red : (player.temp > 60 ? PAL.yellow : PAL.white);
+    ctx.fillRect(20, 214, tempW, 8);
 
-      ctx.fillStyle = '#4ade80';
-      ctx.font = '900 32px sans-serif';
-      ctx.fillText('PRESS ENTER, SPACE, OR TAP SCREEN TO RIDE!', W * 0.5, H * 0.5 + 155);
-      ctx.textAlign = 'left';
+    // Center Box: TIME & LAP
+    ctx.fillStyle = PAL.bleacherBlue;
+    ctx.fillRect(114, 192, 96, 40);
+    ctx.strokeStyle = PAL.white;
+    ctx.strokeRect(114, 192, 96, 40);
+    const mins = Math.floor(player.raceTime / 60);
+    const secs = Math.floor(player.raceTime % 60);
+    const hund = Math.floor((player.raceTime * 100) % 100);
+    const timeStr = `${mins}:${String(secs).padStart(2, '0')}:${String(hund).padStart(2, '0')}`;
+    drawText(122, 198, `TIME ${timeStr}`, PAL.white, 1);
+    drawText(122, 214, `LAP  ${Math.min(player.lap, player.totalLaps)}/${player.totalLaps}`, PAL.yellow, 1);
+
+    // Right Box: BEST TIME & CONTROLS HINT
+    ctx.fillStyle = PAL.bleacherBlue;
+    ctx.fillRect(218, 192, 92, 40);
+    ctx.strokeStyle = PAL.white;
+    ctx.strokeRect(218, 192, 92, 40);
+    drawText(226, 198, `BEST 0:${TRACKS[trackIdx].best.toFixed(0)}:00`, PAL.white, 1);
+    drawText(226, 214, 'A:GAS B:TURBO', PAL.cyan, 1);
+
+    // 7. Classic 1984 NES Title Screen / Finish Screen
+    if (state === 'title' || state === 'finished') {
+      ctx.fillStyle = PAL.black;
+      ctx.fillRect(24, 18, W - 48, 162);
+      ctx.strokeStyle = PAL.red;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(24, 18, W - 48, 162);
+
+      // Brick-Red EXCITEBIKE Logo Banner
+      ctx.fillStyle = PAL.red;
+      ctx.fillRect(52, 28, 216, 30);
+      drawText(72, 36, 'EXCITEBIKE', PAL.white, 3);
+      drawText(64, 66, state === 'finished' ? `FINISH TIME: ${timeStr}!` : '1984 NINTENDO 8-BIT EDITION', PAL.yellow, 1);
+
+      const opts = [
+        '1. SELECTION A (SOLO TIME TRIAL)',
+        '2. SELECTION B (RACE VS RIVALS)',
+        '3. DESIGN      (BUILD TRACK A-I)'
+      ];
+      opts.forEach((txt, idx) => {
+        if (mode === idx) {
+          drawText(46, 92 + idx * 16, '>', PAL.red, 1);
+        }
+        drawText(58, 92 + idx * 16, txt, mode === idx ? PAL.white : PAL.gray, 1);
+      });
+
+      drawText(44, 146, 'SPACE/X = A (GAS)   Z/SHIFT = B (TURBO)', PAL.cyan, 1);
+      drawText(44, 160, 'PRESS ENTER, SPACE, OR TAP TO START!', PAL.turfGreen, 1);
     }
   }
 
