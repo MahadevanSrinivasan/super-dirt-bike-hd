@@ -100,6 +100,8 @@ typedef struct {
 
 static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
+static SDL_Texture *screen_tex = NULL;
+static Uint32 fb[W * H];
 
 static int mode = 0;      /* 0=Selection A, 1=Selection B, 2=Design */
 static int track_idx = 0; /* 0..4 */
@@ -213,20 +215,29 @@ static const unsigned char font5x7[96][7] = {
     ['Z' - 32] = {31,1,2,4,8,16,31}
 };
 
-static void fill_rect(int x, int y, int w, int h, Color c) {
-    SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, 255);
-    SDL_Rect r = {x, y, w, h};
-    SDL_RenderFillRect(renderer, &r);
+static inline void fill_rect(int x, int y, int w, int h, Color c) {
+    int x0 = x < 0 ? 0 : x;
+    int y0 = y < 0 ? 0 : y;
+    int x1 = (x + w) > W ? W : (x + w);
+    int y1 = (y + h) > H ? H : (y + h);
+    if (x0 >= x1 || y0 >= y1) return;
+    Uint32 pix = 0xFF000000u | ((Uint32)c.r << 16) | ((Uint32)c.g << 8) | (Uint32)c.b;
+    for (int ry = y0; ry < y1; ry++) {
+        Uint32 *row = &fb[ry * W + x0];
+        for (int rx = x0; rx < x1; rx++) {
+            *row++ = pix;
+        }
+    }
 }
 
-static void stroke_rect(int x, int y, int w, int h, Color c) {
-    SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, 255);
-    SDL_Rect r = {x, y, w, h};
-    SDL_RenderDrawRect(renderer, &r);
+static inline void stroke_rect(int x, int y, int w, int h, Color c) {
+    fill_rect(x, y, w, 1, c);
+    fill_rect(x, y + h - 1, w, 1, c);
+    fill_rect(x, y, 1, h, c);
+    fill_rect(x + w - 1, y, 1, h, c);
 }
 
 static void draw_text(int x, int y, const char *s, Color col, int scale) {
-    SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, 255);
     int cx = x;
     while (*s) {
         char c = *s++;
@@ -234,10 +245,11 @@ static void draw_text(int x, int y, const char *s, Color col, int scale) {
         if (c >= 32 && c < 128) {
             const unsigned char *g = font5x7[c - 32];
             for (int r = 0; r < 7; r++) {
+                unsigned char row_bits = g[r];
+                if (!row_bits) continue;
                 for (int col_i = 0; col_i < 5; col_i++) {
-                    if (g[r] & (1 << (4 - col_i))) {
-                        SDL_Rect rc = {cx + col_i * scale, y + r * scale, scale, scale};
-                        SDL_RenderFillRect(renderer, &rc);
+                    if (row_bits & (1 << (4 - col_i))) {
+                        fill_rect(cx + col_i * scale, y + r * scale, scale, scale, col);
                     }
                 }
             }
@@ -847,6 +859,8 @@ static void render_frame(void) {
         draw_text(44, 160, "PRESS ENTER OR SPACE TO START!", C_TURF, 1);
     }
 
+    SDL_UpdateTexture(screen_tex, NULL, fb, W * (int)sizeof(Uint32));
+    SDL_RenderCopy(renderer, screen_tex, NULL, NULL);
     SDL_RenderPresent(renderer);
 }
 
@@ -861,9 +875,9 @@ int main(int argc, char **argv) {
     window = SDL_CreateWindow("Excitebike (NES 1984 Edition)", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                               1280, 720, SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_SHOWN);
     if (!window) window = SDL_CreateWindow("Excitebike", 0, 0, 1280, 720, SDL_WINDOW_FULLSCREEN);
-    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
-    SDL_RenderSetLogicalSize(renderer, W, H);
+    screen_tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, W, H);
 
     SDL_AudioSpec want;
     memset(&want, 0, sizeof(want));
@@ -875,6 +889,23 @@ int main(int argc, char **argv) {
     if (SDL_OpenAudio(&want, NULL) >= 0) SDL_PauseAudio(0);
 
     build_track();
+
+    if (argc > 1 && strcmp(argv[1], "--bench") == 0) {
+        mode = 1;
+        start_race();
+        state = 2;
+        keys_held[SDL_SCANCODE_SPACE] = 1;
+        Uint32 t0 = SDL_GetTicks();
+        for (int f = 0; f < 120; f++) {
+            update_game();
+            render_frame();
+        }
+        Uint32 dt = SDL_GetTicks() - t0;
+        printf("Excitebike 120 racing frames in %u ms (%.2f ms/frame, %.1f FPS)\n", dt, dt / 120.0, 120000.0 / dt);
+        SDL_CloseAudio();
+        SDL_Quit();
+        return 0;
+    }
 
     int running = 1;
     Uint32 last = SDL_GetTicks();
